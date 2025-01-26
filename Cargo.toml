@@ -6,7 +6,7 @@ repository = "https://github.com/paritytech/polkadot-sdk-parachain-template.git"
 edition = "2021"
 
 [workspace]
-members = ["node", "pallets/template", "runtime"]
+members = ["node", "pallets/custom-pallet", "pallets/template", "runtime"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -106,3 +106,5 @@ sp-version = { version = "37.0.0", default-features = false }
 xcm-builder = { version = "17.0.0", default-features = false, package = "staging-xcm-builder" }
 xcm-executor = { version = "17.0.0", default-features = false, package = "staging-xcm-executor" }
 substrate-wasm-builder = { version = "24.0.1", default-features = false }
+pallet-utility = { version = "38.0.0", default-features = false }
+custom-pallet = { path = "./pallets/custom-pallet", default-features = false }

@@ -75,6 +75,8 @@ cumulus-primitives-storage-weight-reclaim.workspace = true
 pallet-collator-selection.workspace = true
 parachains-common.workspace = true
 parachain-info.workspace = true
+pallet-utility.workspace = true
+custom-pallet.workspace = true
 
 [features]
 default = ["std"]
@@ -131,6 +133,8 @@ std = [
 	"xcm-builder/std",
 	"xcm-executor/std",
 	"xcm/std",
+	"pallet-utility/std",
+	"custom-pallet/std",
 ]
 
 runtime-benchmarks = [
@@ -157,6 +161,7 @@ runtime-benchmarks = [
 	"sp-runtime/runtime-benchmarks",
 	"xcm-builder/runtime-benchmarks",
 	"xcm-executor/runtime-benchmarks",
+	"custom-pallet/runtime-benchmarks",
 ]
 
 try-runtime = [
