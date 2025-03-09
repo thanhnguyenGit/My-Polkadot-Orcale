@@ -48,6 +48,7 @@ use polkadot_runtime_common::{
 	xcm_sender::NoPriceForMessageDelivery, BlockHashCount, SlowAdjustingFeeUpdate,
 };
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
+use sp_core::Get;
 use sp_runtime::Perbill;
 use sp_version::RuntimeVersion;
 use xcm::latest::prelude::BodyId;
@@ -322,11 +323,14 @@ impl pallet_utility::Config for Runtime {
 // Define counter max value runtime constant 
 parameter_types! {
     pub const CounterMaxValue: u32 = 100;
+	pub const DefaultValue: u32 = 1;
 }
 
 // Configure custom pallet.
 impl custom_pallet::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type CounterMaxValue = CounterMaxValue;
-    type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
+	type DefaultValue = DefaultValue;
+	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
+
 }
