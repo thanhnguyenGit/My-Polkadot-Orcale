@@ -13,6 +13,12 @@ scale-info = { features = ["derive"], workspace = true }
 frame-support.workspace = true
 frame-system.workspace = true
 frame-benchmarking = { optional = true, workspace = true }
+sp-core = { workspace = true, default-features = true }
+sp-io = { workspace = true, default-features = true }
+sp-runtime = { workspace = true, default-features = true}
+log = {version = "0.4.14", default-features = false}
+#url = "2.5.3"
+sp-std = {workspace = true,default-features = true}
 
 [dev-dependencies]
 sp-core = { workspace = true, default-features = true }

@@ -59,6 +59,7 @@ sp-consensus-aura = { version = "0.40.0", default-features = false }
 sp-core = { version = "34.0.0", default-features = false }
 sp-genesis-builder = { version = "0.15.1", default-features = false }
 sp-io = { version = "38.0.0", default-features = false }
+sp-std = {version = "14.0.0", default-features = false}
 sp-keystore = { version = "0.40.0", default-features = false }
 sp-runtime = { version = "39.0.1", default-features = false }
 sp-timestamp = { version = "34.0.0", default-features = false }

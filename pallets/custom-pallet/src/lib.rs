@@ -20,19 +20,24 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use pallet::*;
-pub use frame_support::{
-    dispatch::{DispatchResult,DispatchResultWithPostInfo},
-    ensure,
-    traits::{Get,EnsureOrigin},
-};
-
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
+    use std::future::pending;
     use super::*;
     use frame_support::dispatch::RawOrigin;
     use frame_support::pallet_prelude::*;
     use frame_system::pallet_prelude::*;
     use frame_support::sp_runtime::generic::BlockId::Number;
+    use sp_io::offchain;
+    use scale_info::prelude::vec::Vec;
+    // use url::Url;
+    use frame_support::{
+        dispatch::{DispatchResult,DispatchResultWithPostInfo},
+        ensure,
+        traits::{Get,EnsureOrigin},
+    };
+    use sp_core::crypto::UncheckedInto;
+    use sp_io::offchain::http_request_write_body;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -64,6 +69,9 @@ pub mod pallet {
     #[pallet::getter(fn initial_value)]
     pub type NumberStorage<T: Config> = StorageValue<_,u32,ValueQuery>;
 
+    #[pallet::storage]
+    #[pallet::getter(fn get_url)]
+    pub type UrlDataStorage<T: Config> = StorageMap<_,Twox64Concat,T::AccountId,Vec<Vec<u8>>,ValueQuery>;
     /// Storage map to track the number of interactions performed by each account.
     #[pallet::storage]
     pub type UserInteractions<T: Config> = StorageMap<_, Twox64Concat, T::AccountId, u32>;
@@ -88,6 +96,18 @@ pub mod pallet {
         DefaultValue {
             default_value: u32,
             who: T::AccountId,
+        },
+        InitializeDefaultValue {
+            default_value: u32
+        },
+        ModifyValue {
+            old_value: u32,
+            new_value: u32,
+            who: T::AccountId,
+        },
+        AddUrl {
+            who: T::AccountId,
+            url: Vec<u8>,
         }
     }
 
@@ -98,9 +118,10 @@ pub mod pallet {
         CounterOverflow,
         UserInteractionOverflow,
         NotSudo,
+        CannotBeZero,
+        CannotNull,
     }
 
-    //#[cfg(feature = "std")]
     impl<T: Config> Default for GenesisConfig<T> {
         fn default() -> Self {
             Self { initial_value: T::DefaultValue::get(), _marker: Default::default() }
@@ -117,10 +138,21 @@ pub mod pallet {
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+            let mut default_value = 0;
             if NumberStorage::<T>::get() == 0 {
-                NumberStorage::<T>::put(T::DefaultValue::get())
+                NumberStorage::<T>::put(T::DefaultValue::get());
+                default_value = T::DefaultValue::get();
             }
+            Self::deposit_event(Event::<T>::InitializeDefaultValue {
+                default_value
+            });
             T::DbWeight::get().writes(1)
+        }
+        fn offchain_worker(block_number: BlockNumberFor<T>) {
+            log::info!("Offchain workder trigger at block: {:?}",block_number);
+            if let Err(e) = Self::ocw_do_fetch_data() {
+                log::error!("Error fetching data: {}", e);
+            }
         }
     }
 
@@ -201,7 +233,6 @@ pub mod pallet {
                     .checked_add(1)
                     .ok_or(Error::<T>::UserInteractionOverflow)?;
                 *interactions = Some(new_interactions); // Store the new value
-
                 Ok(())
             })?;
 
@@ -240,7 +271,23 @@ pub mod pallet {
 
         #[pallet::call_index(5)]
         #[pallet::weight(0)]
-        pub fn fetch_data_from_rpc_call(origin: OriginFor<T>) -> DispatchResult {
+        pub fn add_url(origin: OriginFor<T>,url: Vec<u8>) -> DispatchResult {
+            let caller = ensure_signed(origin)?;
+
+            ensure!(
+                url.len() != 0,
+                Error::<T>::CannotBeZero
+            );
+
+            UrlDataStorage::<T>::try_mutate(&caller,|value| -> Result<_, Error<T>> {
+                value.push(url.clone());
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::<T>::AddUrl {
+                who: caller,
+                url
+            });
 
             Ok(())
         }
@@ -252,11 +299,62 @@ pub mod pallet {
 
             let value = NumberStorage::<T>::get();
 
-            //log::info!("Currnet stored value {}", value);
             Self::deposit_event(Event::<T>::DefaultValue {
                 default_value: value,
                 who: caller
             });
+            Ok(())
+        }
+
+        #[pallet::call_index(7)]
+        #[pallet::weight(0)]
+        pub fn modify_value(origin: OriginFor<T>,value : u32) -> DispatchResult {
+            let caller = ensure_signed(origin)?;
+
+            let old_value = NumberStorage::<T>::get();
+            ensure!(
+                value != 0,
+                Error::<T>::CannotBeZero
+            );
+            NumberStorage::<T>::mutate(|val| {
+                *val = value;
+            });
+
+            let new_value = NumberStorage::<T>::get();
+            Self::deposit_event(Event::<T>::ModifyValue {
+                old_value,
+                new_value,
+                who: caller
+            });
+
+            Ok(())
+        }
+    }
+    impl<T: Config> Pallet<T> {
+        pub fn ocw_do_fetch_data() -> Result<(), &'static str> {
+            for (users,urls) in UrlDataStorage::<T>::iter() {
+                for url in urls {
+                    let url_str = sp_std::str::from_utf8(&url).map_err(|_| "Invalid Url format")?;
+
+                    let request = sp_runtime::offchain::http::Request::get(url_str);
+                    let pending = request
+                        .deadline(sp_io::offchain::timestamp().add(sp_runtime::offchain::Duration::from_millis(5000)))
+                        .send()
+                        .map_err(|_| "Failed to send request")?;
+                    let time_out = sp_io::offchain::timestamp().add(sp_runtime::offchain::Duration::from_millis(5000));
+                    let response = pending
+                        .try_wait(Some(time_out))
+                        .map_err(|_| "Timeout")?
+                        .map_err(|_| "HTTP Error")?;
+
+                    if response.code == 200 {
+                        let data = response.body().collect::<Vec<u8>>();
+                        log::info!("Received data from {}: {:?}", url_str,data);
+                    } else {
+                        log::warn!("API request to {} failed with status code {}", url_str, response.code);
+                    }
+                }
+            }
             Ok(())
         }
     }
