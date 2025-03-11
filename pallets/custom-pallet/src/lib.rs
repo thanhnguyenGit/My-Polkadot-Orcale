@@ -1,44 +1,33 @@
-// This file is part of 'custom-pallet'.
-
-// SPDX-License-Identifier: MIT-0
-
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 #![cfg_attr(not(feature = "std"), no_std)]
-
+extern crate alloc;
+use alloc::vec::Vec;
 pub use pallet::*;
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
-    use std::future::pending;
     use super::*;
     use frame_support::dispatch::RawOrigin;
     use frame_support::pallet_prelude::*;
-    use frame_system::pallet_prelude::*;
-    use frame_support::sp_runtime::generic::BlockId::Number;
-    use sp_io::offchain;
-    use scale_info::prelude::vec::Vec;
-    // use url::Url;
+    use frame_system::{
+        self as system,
+        pallet_prelude::*,
+        offchain::{
+            CreateSignedTransaction, SendSignedTransaction
+        }
+    };
+    use frame_support::sp_runtime::{
+        generic::BlockId::Number,
+        offchain
+    };
     use frame_support::{
         dispatch::{DispatchResult,DispatchResultWithPostInfo},
         ensure,
         traits::{Get,EnsureOrigin},
     };
-    use sp_core::crypto::UncheckedInto;
-    use sp_io::offchain::http_request_write_body;
-
+    use scale_info::prelude::vec::Vec;
+    use frame_support::sp_runtime::offchain::{
+        http,
+        Duration,
+    };
     #[pallet::pallet]
     pub struct Pallet<T>(_);
 
@@ -53,6 +42,15 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
+        /// OCWs submit an unsigned transaction which can be abuse by spam,
+        /// provide a frequency via GracePeriod stop this
+        /// send one every GRACE_PERIOD blocks
+        // #[pallet::constant]
+        // type GracePeriod : Get<BlockNumberFor<Self>>;
+        /// Numbers of blocks cooldown after an unsigned transaction is included.
+        /// Ensure only accept an unsigned transaction once every UnsignedInterval blocks
+        // #[pallet::constant]
+        // type UnsignedInterval: Get<BlockNumberFor<Self>>;
         #[pallet::constant]
         type CounterMaxValue: Get<u32>;
         #[pallet::constant]
@@ -108,6 +106,10 @@ pub mod pallet {
         AddUrl {
             who: T::AccountId,
             url: Vec<u8>,
+        },
+        FetchedData {
+            url: &'static str,
+            data: &'static str,
         }
     }
 
@@ -122,6 +124,7 @@ pub mod pallet {
         CannotNull,
     }
 
+    type bytes = Vec<u8>;
     impl<T: Config> Default for GenesisConfig<T> {
         fn default() -> Self {
             Self { initial_value: T::DefaultValue::get(), _marker: Default::default() }
@@ -150,6 +153,8 @@ pub mod pallet {
         }
         fn offchain_worker(block_number: BlockNumberFor<T>) {
             log::info!("Offchain workder trigger at block: {:?}",block_number);
+            let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
+            log::debug!("Current block: {:?}, parent hash: {:?}", block_number,parent_hash);
             if let Err(e) = Self::ocw_do_fetch_data() {
                 log::error!("Error fetching data: {}", e);
             }
@@ -331,30 +336,32 @@ pub mod pallet {
         }
     }
     impl<T: Config> Pallet<T> {
-        pub fn ocw_do_fetch_data() -> Result<(), &'static str> {
-            for (users,urls) in UrlDataStorage::<T>::iter() {
-                for url in urls {
-                    let url_str = sp_std::str::from_utf8(&url).map_err(|_| "Invalid Url format")?;
-
-                    let request = sp_runtime::offchain::http::Request::get(url_str);
-                    let pending = request
-                        .deadline(sp_io::offchain::timestamp().add(sp_runtime::offchain::Duration::from_millis(5000)))
-                        .send()
-                        .map_err(|_| "Failed to send request")?;
-                    let time_out = sp_io::offchain::timestamp().add(sp_runtime::offchain::Duration::from_millis(5000));
-                    let response = pending
-                        .try_wait(Some(time_out))
-                        .map_err(|_| "Timeout")?
-                        .map_err(|_| "HTTP Error")?;
-
-                    if response.code == 200 {
-                        let data = response.body().collect::<Vec<u8>>();
-                        log::info!("Received data from {}: {:?}", url_str,data);
-                    } else {
-                        log::warn!("API request to {} failed with status code {}", url_str, response.code);
-                    }
-                }
+        pub fn ocw_do_fetch_data() -> Result<(), http::Error> {
+            let duration = Duration::from_millis(2_000);
+            let url = "https://catfact.ninja/fact";
+            let request = http::Request::get(url);
+            let pending = request
+                .deadline(Default::default())
+                .send()
+                .map_err(|_| http::Error::IoError)?;
+            let response = pending
+                .try_wait(Default::default())
+                .map_err(|_| http::Error::DeadlineReached)??;
+            if response.code != 200u16 {
+                log::warn!("Unexpected status code: {}", response.code);
+                return Err(http::Error::Unknown)
             }
+            let body = response
+                .body()
+                .collect::<bytes>();
+            let body_str = alloc::str::from_utf8(&body)
+                .map_err(|_| {
+                    log::warn!("No UTF-8 body");
+                    http::Error::Unknown})?;
+            Self::deposit_event(Event::<T>::FetchedData {
+                url,
+                data: body_str
+            });
             Ok(())
         }
     }
