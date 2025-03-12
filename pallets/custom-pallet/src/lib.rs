@@ -1,7 +1,33 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 extern crate alloc;
 use alloc::vec::Vec;
+use codec::{Decode, Encode};
+use alloc::string::{
+    String,
+    ToString
+};
+use sp_core::offchain::Timestamp;
+
 pub use pallet::*;
+
+pub mod crypto {
+    use super::KEY_TYPE;
+    use sp_core::sr25519::Signature as Sr25519Signature;
+    use sp_runtime::{
+        app_crypto::{app_crypto, sr25519},
+        traits::Verify,
+        MultiSignature, MultiSigner
+    };
+    app_crypto!(sr25519, KEY_TYPE);
+
+    pub struct TestAuthId;
+
+    impl frame_system::offchain::AppCrypto<MultiSigner,MultiSignature> for TestAuthId {
+        type RuntimeAppPublic = Public;
+        type GenericPublic = sp_core::sr25519::Public;
+        type GenericSignature = sp_core::sr25519::Signature;
+    }
+}
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
     use super::*;
@@ -11,12 +37,25 @@ pub mod pallet {
         self as system,
         pallet_prelude::*,
         offchain::{
-            CreateSignedTransaction, SendSignedTransaction
+            CreateSignedTransaction, SendSignedTransaction,SubmitTransaction,AppCrypto,SendUnsignedTransaction,
+            SignedPayload,Signer,SigningTypes
         }
     };
+    use frame_support::sp_runtime::offchain::{
+        http,
+        storage::{
+            MutateStorageError,StorageRetrievalError,StorageValueRef
+        },
+        Duration,
+    };
+    use lite_json::json::JsonValue;
     use frame_support::sp_runtime::{
         generic::BlockId::Number,
         offchain
+    };
+    use frame_support::sp_runtime::{
+        traits::Zero,
+        transaction_validity::{InvalidTransaction,TransactionValidity,ValidTransaction}
     };
     use frame_support::{
         dispatch::{DispatchResult,DispatchResultWithPostInfo},
@@ -24,10 +63,8 @@ pub mod pallet {
         traits::{Get,EnsureOrigin},
     };
     use scale_info::prelude::vec::Vec;
-    use frame_support::sp_runtime::offchain::{
-        http,
-        Duration,
-    };
+    use sp_core::crypto::KeyTypeId;
+
     #[pallet::pallet]
     pub struct Pallet<T>(_);
 
@@ -39,18 +76,25 @@ pub mod pallet {
 
     // Configuration trait for the pallet
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-        /// OCWs submit an unsigned transaction which can be abuse by spam,
-        /// provide a frequency via GracePeriod stop this
+        /// The identifier type for an OCW - off-chain worker
+        type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
+
+        /// OCWs submit an unsigned transaction which can be abused by spam,
+        /// provide a "block period" via GracePeriod to stop this,
         /// send one every GRACE_PERIOD blocks
-        // #[pallet::constant]
-        // type GracePeriod : Get<BlockNumberFor<Self>>;
-        /// Numbers of blocks cooldown after an unsigned transaction is included.
+        #[pallet::constant]
+        type GracePeriod : Get<BlockNumberFor<Self>>;
+        /// Numbers of blocks after an unsigned transaction is included.
         /// Ensure only accept an unsigned transaction once every UnsignedInterval blocks
-        // #[pallet::constant]
-        // type UnsignedInterval: Get<BlockNumberFor<Self>>;
+        #[pallet::constant]
+        type UnsignedInterval: Get<BlockNumberFor<Self>>;
+        /// config for priority of unsigned transaction
+        /// due to it dont't cost fee compare to signed.
+        #[pallet::constant]
+        type UnsignedPriority: Get<TransactionPriority>;
         #[pallet::constant]
         type CounterMaxValue: Get<u32>;
         #[pallet::constant]
@@ -61,18 +105,31 @@ pub mod pallet {
 
     /// Storage for the current value of the counter.
     #[pallet::storage]
-    pub type CounterValue<T> = StorageValue<_, u32>;
+    pub(super) type CounterValue<T> = StorageValue<_, u32>;
 
     #[pallet::storage]
     #[pallet::getter(fn initial_value)]
-    pub type NumberStorage<T: Config> = StorageValue<_,u32,ValueQuery>;
+    pub(super) type NumberStorage<T: Config> = StorageValue<_,u32,ValueQuery>;
 
     #[pallet::storage]
     #[pallet::getter(fn get_url)]
-    pub type UrlDataStorage<T: Config> = StorageMap<_,Twox64Concat,T::AccountId,Vec<Vec<u8>>,ValueQuery>;
+    pub(super) type UrlDataStorage<T: Config> = StorageMap<_,Twox64Concat,T::AccountId,Vec<Vec<u8>>,ValueQuery>;
     /// Storage map to track the number of interactions performed by each account.
     #[pallet::storage]
-    pub type UserInteractions<T: Config> = StorageMap<_, Twox64Concat, T::AccountId, u32>;
+    pub(super) type UserInteractions<T: Config> = StorageMap<_, Twox64Concat, T::AccountId, u32>;
+    /// Define the block where next unsigned transaction will be accepted.
+    /// Only one transaction every T::UnsignedInterval blocks.
+    /// This value define when new transaction is going to be accepted
+    #[pallet::storage]
+    pub(super) type NextUnsignedAt<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
+
+    #[derive(Encode,Decode,Clone,PartialEq,Eq,RuntimeDebug,scale_info::TypeInfo)]
+    pub struct CatFact {
+        fact: String,
+        length: u32
+    }
+
+    pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"cat!");
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -108,8 +165,8 @@ pub mod pallet {
             url: Vec<u8>,
         },
         FetchedData {
-            url: &'static str,
-            data: &'static str,
+            url: String,
+            data: String,
         }
     }
 
@@ -151,12 +208,19 @@ pub mod pallet {
             });
             T::DbWeight::get().writes(1)
         }
+        /// Off chain worker entry point.
+        /// This function will be called when the node is fully synced and a new
+        /// block is successfully imported.
+        /// Note that it's not guaranteed for offchain workers to run on EVERY block, there might
+        /// be cases where some blocks are skipped, or for some the worker runs twice (re-orgs),
+        /// so the code should be able to handle that.
+        /// You can use `Local Storage` API to coordinate runs of the worker.
         fn offchain_worker(block_number: BlockNumberFor<T>) {
             log::info!("Offchain workder trigger at block: {:?}",block_number);
             let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
-            log::debug!("Current block: {:?}, parent hash: {:?}", block_number,parent_hash);
-            if let Err(e) = Self::ocw_do_fetch_data() {
-                log::error!("Error fetching data: {}", e);
+            log::info!("Current block: {:?}, parent hash: {:?}", block_number,parent_hash);
+            if let Err(e) = Self::ocw_fetch_data_and_send_unsigned_tx(block_number) {
+                log::error!("Error fetching data: {:#?}", e);
             }
         }
     }
@@ -334,18 +398,38 @@ pub mod pallet {
 
             Ok(())
         }
+
+        #[pallet::call_index(8)]
+        #[pallet::weight(0)]
+        pub fn submit_unsigned_tx(origin: OriginFor<T>,_block_number: BlockNumberFor<T>) -> DispatchResultWithPostInfo {
+            let caller = ensure_none(origin)?;
+            let current_block = <system::Pallet<T>>::block_number();
+            <NextUnsignedAt<T>>::put(current_block + T::UnsignedInterval::get());
+            Ok(().into())
+        }
     }
     impl<T: Config> Pallet<T> {
-        pub fn ocw_do_fetch_data() -> Result<(), http::Error> {
-            let duration = Duration::from_millis(2_000);
+        /// fetch data and send an unsigned transaction.
+        fn ocw_fetch_data_and_send_unsigned_tx(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
+            let next_unsigned_at = NextUnsignedAt::<T>::get();
+            if next_unsigned_at > block_number {
+                return Err("InvalidOperator: need to wait before send another unsigned transaction");
+            }
+            let data = Self::ocw_do_fetch_data().map_err(|_| "Failed to fetch data")?;
+            let call = Call::submit_unsigned_tx {block_number};
+
+            Ok(())
+        }
+        fn ocw_do_fetch_data() -> Result<(), http::Error> {
+            let ttl: Timestamp = Timestamp::from_unix_millis(2000);
             let url = "https://catfact.ninja/fact";
             let request = http::Request::get(url);
             let pending = request
-                .deadline(Default::default())
+                .deadline(ttl)
                 .send()
                 .map_err(|_| http::Error::IoError)?;
             let response = pending
-                .try_wait(Default::default())
+                .try_wait(ttl)
                 .map_err(|_| http::Error::DeadlineReached)??;
             if response.code != 200u16 {
                 log::warn!("Unexpected status code: {}", response.code);
@@ -358,11 +442,12 @@ pub mod pallet {
                 .map_err(|_| {
                     log::warn!("No UTF-8 body");
                     http::Error::Unknown})?;
-            Self::deposit_event(Event::<T>::FetchedData {
-                url,
-                data: body_str
-            });
+
             Ok(())
+        }
+        fn parse_responsee_to_json(response: &str) -> Option<CatFact>{
+            let val = lite_json::parse_json(response);
+
         }
     }
 }
