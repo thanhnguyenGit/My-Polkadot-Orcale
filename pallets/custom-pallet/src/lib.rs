@@ -62,6 +62,7 @@ pub mod pallet {
         ensure,
         traits::{Get,EnsureOrigin},
     };
+    use frame_support::traits::Len;
     use scale_info::prelude::vec::Vec;
     use sp_core::crypto::KeyTypeId;
 
@@ -99,7 +100,9 @@ pub mod pallet {
         type CounterMaxValue: Get<u32>;
         #[pallet::constant]
         type DefaultValue: Get<u32>;
-        /// A type representing the weights required by the dispatchables of this pallet.
+        /// A type representing the weights required by the dispatchables of this pallet
+        #[pallet::constant]
+        type MaxCatFact : Get<u32>;
         type WeightInfo: WeightInfo;
     }
 
@@ -122,6 +125,10 @@ pub mod pallet {
     /// This value define when new transaction is going to be accepted
     #[pallet::storage]
     pub(super) type NextUnsignedAt<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn get_cat_fact)]
+    pub(super) type CatFactStorage<T: Config> = StorageValue<_, BoundedVec<CatFact,T::MaxCatFact>,ValueQuery>;
 
     #[derive(Encode,Decode,Clone,PartialEq,Eq,RuntimeDebug,scale_info::TypeInfo)]
     pub struct CatFact {
@@ -160,13 +167,16 @@ pub mod pallet {
             new_value: u32,
             who: T::AccountId,
         },
-        AddUrl {
-            who: T::AccountId,
-            url: Vec<u8>,
+        AddData {
+            who: Option<T::AccountId>,
+            data: CatFact,
         },
         FetchedData {
             url: String,
             data: String,
+        },
+        UnsignedTxCommit {
+            who: T::AccountId
         }
     }
 
@@ -401,10 +411,14 @@ pub mod pallet {
 
         #[pallet::call_index(8)]
         #[pallet::weight(0)]
-        pub fn submit_unsigned_tx(origin: OriginFor<T>,_block_number: BlockNumberFor<T>) -> DispatchResultWithPostInfo {
+        pub fn submit_unsigned_tx(origin: OriginFor<T>,_block_number: BlockNumberFor<T>, catfact: CatFact) -> DispatchResultWithPostInfo {
             let caller = ensure_none(origin)?;
+            Self::add_cat_fact(None,catfact);
             let current_block = <system::Pallet<T>>::block_number();
             <NextUnsignedAt<T>>::put(current_block + T::UnsignedInterval::get());
+            Self::deposit_event(Event::<T>::UnsignedTxCommit {
+                who: caller
+            });
             Ok(().into())
         }
     }
@@ -415,12 +429,12 @@ pub mod pallet {
             if next_unsigned_at > block_number {
                 return Err("InvalidOperator: need to wait before send another unsigned transaction");
             }
-            let data = Self::ocw_do_fetch_data().map_err(|_| "Failed to fetch data")?;
-            let call = Call::submit_unsigned_tx {block_number};
-
+            let catfact = Self::ocw_do_fetch_data().map_err(|_| "Failed to fetch data")?;
+            let call = Call::submit_unsigned_tx {block_number, catfact};
+            
             Ok(())
         }
-        fn ocw_do_fetch_data() -> Result<(), http::Error> {
+        fn ocw_do_fetch_data() -> Result<CatFact, http::Error> {
             let ttl: Timestamp = Timestamp::from_unix_millis(2000);
             let url = "https://catfact.ninja/fact";
             let request = http::Request::get(url);
@@ -442,12 +456,60 @@ pub mod pallet {
                 .map_err(|_| {
                     log::warn!("No UTF-8 body");
                     http::Error::Unknown})?;
-
-            Ok(())
+            let result = match Self::parse_responsee_to_json(body_str) {
+                None => {
+                    log::warn!("Unable to extract cat fact from the response: {:?}", body_str);
+                    Err(http::Error::Unknown)
+                }
+                Some(cat_fact) => {
+                    log::debug!("Cat fact: {:#?}", cat_fact);
+                    Ok(cat_fact)
+                }
+            }.expect("Parser not working");
+            Ok(result)
         }
         fn parse_responsee_to_json(response: &str) -> Option<CatFact>{
-            let val = lite_json::parse_json(response);
+            let val = lite_json::parse_json(response).ok()?;
 
+            if let JsonValue::Object(obj) = val {
+                let fact = obj
+                    .iter()
+                    .find(|(k, _)| k.iter().copied().eq("fact".chars()))
+                    .and_then(|(_, v)| match v {
+                        JsonValue::String(fact) => Some(fact.iter().collect::<String>()),
+                        _ => None,
+                    })?;
+
+                let length = obj
+                    .iter()
+                    .find(|(k, _)| k.iter().copied().eq("length".chars()))
+                    .and_then(|(_, v)| match v {
+                        JsonValue::Number(number) => Some(number.integer as u32),
+                        _ => None,
+                    })?;
+
+                Some(CatFact {
+                    fact,
+                    length
+                })
+            } else {
+                None
+            }
+        }
+        fn add_cat_fact(caller: Option<T::AccountId>, new_cat_fact: CatFact) {
+            let log_event_new_cat_fact = new_cat_fact.clone();
+            log::info!("Adding cat fact to the on-chain list: {:#?}", new_cat_fact);
+            CatFactStorage::<T>::mutate(|cat_facts| {
+                if cat_facts.len() as u32 >= T::MaxCatFact::get()  {
+                    log::info!("Number of Cat fact reach maximum, auto-remove old cat fact ");
+                    cat_facts.remove(0);
+                }
+                let _ = cat_facts.try_push(new_cat_fact).map_err(|_| "StorageOverflow");
+            });
+            Self::deposit_event(Event::<T>::AddData {
+                who: caller,
+                data: log_event_new_cat_fact
+            })
         }
     }
 }
