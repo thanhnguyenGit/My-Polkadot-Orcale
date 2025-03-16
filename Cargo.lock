@@ -6248,6 +6248,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ocw-pallet"
+version = "0.1.0"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "lite-json",
+ "log",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7588,6 +7605,7 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "log",
+ "ocw-pallet",
  "pallet-transaction-payment-rpc",
  "parachain-template-runtime",
  "parity-scale-codec",
@@ -7652,6 +7670,7 @@ dependencies = [
  "frame-try-runtime",
  "hex-literal",
  "log",
+ "ocw-pallet",
  "pallet-aura",
  "pallet-authorship",
  "pallet-balances",

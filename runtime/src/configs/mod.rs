@@ -25,9 +25,12 @@
 
 mod xcm_config;
 
+use codec::Encode;
 // Substrate and Polkadot dependencies
 use cumulus_pallet_parachain_system::RelayNumberMonotonicallyIncreases;
 use cumulus_primitives_core::{AggregateMessageOrigin, ParaId};
+use cumulus_primitives_storage_weight_reclaim::StorageWeightReclaim;
+use frame_metadata_hash_extension::CheckMetadataHash;
 use frame_support::{
 	derive_impl,
 	dispatch::DispatchClass,
@@ -38,30 +41,25 @@ use frame_support::{
 	weights::{ConstantMultiplier, Weight},
 	PalletId,
 };
-use frame_system::{
-	limits::{BlockLength, BlockWeights},
-	EnsureRoot,
-};
+use frame_system::{limits::{BlockLength, BlockWeights}, CheckGenesis, CheckMortality, CheckNonZeroSender, CheckNonce, CheckSpecVersion, CheckTxVersion, CheckWeight, EnsureRoot};
+use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendTransactionTypes, SigningTypes};
+use pallet_transaction_payment::ChargeTransactionPayment;
 use pallet_xcm::{EnsureXcm, IsVoiceOfBody};
 use parachains_common::message_queue::{NarrowOriginToSibling, ParaIdToSibling};
+use parachains_common::MINUTES;
 use polkadot_runtime_common::{
 	xcm_sender::NoPriceForMessageDelivery, BlockHashCount, SlowAdjustingFeeUpdate,
 };
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::Get;
-use sp_runtime::Perbill;
+use sp_runtime::{generic, OpaqueExtrinsic, Perbill, SaturatedConversion};
+use sp_runtime::generic::SignedPayload;
+use sp_runtime::traits::{Extrinsic, SignaturePayload};
 use sp_version::RuntimeVersion;
 use xcm::latest::prelude::BodyId;
-
+use custom_pallet::Call;
 // Local module imports
-use super::{
-	weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight},
-	AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash,
-	MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent,
-	RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys,
-	System, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS,
-	MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION,
-};
+use super::{weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight}, AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys, Signature, SignedExtra, System, UncheckedExtrinsic, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION};
 use xcm_config::{RelayLocation, XcmOriginToTransactDispatchOrigin};
 
 use super::OriginCaller;
@@ -320,14 +318,82 @@ impl pallet_utility::Config for Runtime {
 }
 
 parameter_types! {
-    pub const CounterMaxValue: u32 = 100;
-	pub const DefaultValue: u32 = 12;
+	pub const DefaultGracePeriod: BlockNumber = 3;
+	pub const DefaultMaxCatFact: u32 = 20;
+}
+
+impl SendTransactionTypes<Call<Self>> for Runtime {
+	type Extrinsic = UncheckedExtrinsic;
+	type OverarchingCall = RuntimeCall;
 }
 
 impl custom_pallet::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type CounterMaxValue = CounterMaxValue;
-	type DefaultValue = DefaultValue;
+	type GracePeriod = ConstU32<3>;
+	type UnsignedInterval = ConstU32<3>;
+	type UnsignedPriority = ConstU64<3>;
+	type MaxCatFact = ConstU32<50>;
 	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
+}
 
+parameter_types! {
+	pub const GracePeriod: BlockNumber = 3;
+	pub const UnsignedInterval: BlockNumber = 3;
+	pub const UnsignedPriority: BlockNumber = 3;
+	pub const MaxPrices: u32 = 500;
+}
+
+impl CreateSignedTransaction<ocw_pallet::Call<Self>> for Runtime {
+	fn create_transaction<C: AppCrypto<Self::Public, Self::Signature>>(
+		call: Self::OverarchingCall,
+		public: Self::Public,
+		account: Self::AccountId,
+		nonce: Self::Nonce
+	) -> Option<(Self::OverarchingCall, <Self::Extrinsic as Extrinsic>::SignaturePayload)> {
+		let period = BlockHashCount::get() as u64;
+		let current_block = System::block_number()
+			.saturated_into::<u64>()
+			.saturating_sub(1);
+		let tip = 0;
+		let extra: SignedExtra = (
+			frame_system::CheckNonZeroSender::<Runtime>::new(),
+			frame_system::CheckSpecVersion::<Runtime>::new(),
+			frame_system::CheckTxVersion::<Runtime>::new(),
+			frame_system::CheckGenesis::<Runtime>::new(),
+			frame_system::CheckEra::<Runtime>::from(generic::Era::mortal(period, current_block)),
+			frame_system::CheckNonce::<Runtime>::from(nonce),
+			frame_system::CheckWeight::<Runtime>::new(),
+			pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
+			StorageWeightReclaim::<Runtime>::new(),
+			CheckMetadataHash::<Runtime>::new(true)
+		);
+		let raw_payload = SignedPayload::new(call, extra)
+			.map_err(|e| {
+				//log::warn!("Unable to create signed payload: {:?}", e);
+			})
+			.ok()?;
+		let signature = raw_payload.using_encoded(|payload| C::sign(payload, public))?;
+		let address = account;
+		let (call, extra, _) = raw_payload.deconstruct();
+		Some((call, (sp_runtime::MultiAddress::Id(address), signature.into(), extra)))
+	}
+}
+
+impl SendTransactionTypes<ocw_pallet::Call<Self>> for Runtime {
+	type Extrinsic = UncheckedExtrinsic;
+	type OverarchingCall = RuntimeCall;
+}
+
+impl SigningTypes for Runtime {
+	type Public = <Signature as sp_runtime::traits::Verify>::Signer;
+	type Signature = Signature;
+}
+
+impl ocw_pallet::Config for Runtime {
+	type AuthorityId = ocw_pallet::crypto::TestAuthId;
+	type RuntimeEvent = RuntimeEvent;
+	type GracePeriod = GracePeriod;
+	type UnsignedInterval = UnsignedInterval;
+	type UnsignedPriority = UnsignedPriority;
+	type MaxPrices = MaxPrices;
 }

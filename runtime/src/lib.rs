@@ -315,6 +315,8 @@ mod runtime {
 	// Custom pallet
 	#[runtime::pallet_index(52)]
 	pub type CustomPallet = custom_pallet;
+	#[runtime::pallet_index(53)]
+	pub type OcwPallet = ocw_pallet;
 }
 
 #[docify::export(register_validate_block)]

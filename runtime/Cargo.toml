@@ -77,7 +77,7 @@ parachains-common.workspace = true
 parachain-info.workspace = true
 pallet-utility.workspace = true
 custom-pallet.workspace = true
-
+ocw-pallet.workspace = true
 [features]
 default = ["std"]
 std = [
@@ -135,6 +135,7 @@ std = [
 	"xcm/std",
 	"pallet-utility/std",
 	"custom-pallet/std",
+	"ocw-pallet/std",
 ]
 
 runtime-benchmarks = [
@@ -162,6 +163,7 @@ runtime-benchmarks = [
 	"xcm-builder/runtime-benchmarks",
 	"xcm-executor/runtime-benchmarks",
 	"custom-pallet/runtime-benchmarks",
+	"ocw-pallet/runtime-benchmarks",
 ]
 
 try-runtime = [

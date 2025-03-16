@@ -9,7 +9,7 @@ use parachain_template_runtime::{
 	apis::RuntimeApi,
 	opaque::{Block, Hash},
 };
-
+use sp_keystore::*;
 // Cumulus Imports
 use cumulus_client_collator::service::CollatorService;
 #[docify::export(lookahead_collator)]
@@ -30,6 +30,7 @@ use cumulus_relay_chain_interface::{OverseerHandle, RelayChainInterface};
 
 // Substrate Imports
 use frame_benchmarking_cli::SUBSTRATE_REFERENCE_HARDWARE;
+use polkadot_primitives::ASSIGNMENT_KEY_TYPE_ID;
 use prometheus_endpoint::Registry;
 use sc_client_api::Backend;
 use sc_consensus::ImportQueue;
@@ -122,6 +123,15 @@ pub fn new_partial(config: &Configuration) -> Result<Service, sc_service::Error>
 		telemetry.as_ref().map(|telemetry| telemetry.handle()),
 		&task_manager,
 	);
+	let keystore = keystore_container.keystore();
+	if config.offchain_worker.enabled {
+		log::info!("offchain worker enabled");
+		Keystore::sr25519_generate_new(
+			&*keystore,
+			ocw_pallet::KEY_TYPE,
+			Some("//Alice")
+		).expect("Creating key with account Alice shoudl succed.");
+	}
 
 	Ok(PartialComponents {
 		backend,
