@@ -311,10 +311,8 @@ mod runtime {
 
     #[runtime::pallet_index(51)]
     pub type Utility = pallet_utility;
-
-	// Custom pallet
-	#[runtime::pallet_index(52)]
-	pub type CustomPallet = custom_pallet;
+	// #[runtime::pallet_index(52)]
+	// pub type CustomPallet = custom_pallet;
 	#[runtime::pallet_index(53)]
 	pub type OcwPallet = ocw_pallet;
 }

@@ -317,24 +317,24 @@ impl pallet_utility::Config for Runtime {
     type WeightInfo = pallet_utility::weights::SubstrateWeight<Runtime>;
 }
 
-parameter_types! {
-	pub const DefaultGracePeriod: BlockNumber = 3;
-	pub const DefaultMaxCatFact: u32 = 20;
-}
-
-impl SendTransactionTypes<Call<Self>> for Runtime {
-	type Extrinsic = UncheckedExtrinsic;
-	type OverarchingCall = RuntimeCall;
-}
-
-impl custom_pallet::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-	type GracePeriod = ConstU32<3>;
-	type UnsignedInterval = ConstU32<3>;
-	type UnsignedPriority = ConstU64<3>;
-	type MaxCatFact = ConstU32<50>;
-	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
-}
+// parameter_types! {
+// 	pub const DefaultGracePeriod: BlockNumber = 3;
+// 	pub const DefaultMaxCatFact: u32 = 20;
+// }
+//
+// impl SendTransactionTypes<Call<Self>> for Runtime {
+// 	type Extrinsic = UncheckedExtrinsic;
+// 	type OverarchingCall = RuntimeCall;
+// }
+//
+// impl custom_pallet::Config for Runtime {
+//     type RuntimeEvent = RuntimeEvent;
+// 	type GracePeriod = ConstU32<3>;
+// 	type UnsignedInterval = ConstU32<3>;
+// 	type UnsignedPriority = ConstU64<3>;
+// 	type MaxCatFact = ConstU32<50>;
+// 	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
+// }
 
 parameter_types! {
 	pub const GracePeriod: BlockNumber = 3;

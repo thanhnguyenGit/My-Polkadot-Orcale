@@ -89,7 +89,6 @@ pub fn new_partial(config: &Configuration) -> Result<Service, sc_service::Error>
 		.with_max_runtime_instances(config.executor.max_runtime_instances)
 		.with_runtime_cache_size(config.executor.runtime_cache_size)
 		.build();
-
 	let (client, backend, keystore_container, task_manager) =
 		sc_service::new_full_parts_record_import::<Block, RuntimeApi, _>(
 			config,
@@ -123,6 +122,7 @@ pub fn new_partial(config: &Configuration) -> Result<Service, sc_service::Error>
 		telemetry.as_ref().map(|telemetry| telemetry.handle()),
 		&task_manager,
 	);
+
 	let keystore = keystore_container.keystore();
 	if config.offchain_worker.enabled {
 		log::info!("offchain worker enabled");

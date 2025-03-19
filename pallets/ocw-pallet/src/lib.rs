@@ -69,7 +69,8 @@ use sp_runtime::{
     RuntimeDebug,
 };
 use sp_std::vec::Vec;
-
+extern crate alloc;
+use alloc::string::{String,ToString};
 /// Defines application identifier for crypto keys of this module.
 ///
 /// Every module that deals with signatures needs to declare its unique identifier for
@@ -96,8 +97,8 @@ pub mod crypto {
 
     impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for TestAuthId {
         type RuntimeAppPublic = Public;
-        type GenericSignature = sp_core::sr25519::Signature;
         type GenericPublic = sp_core::sr25519::Public;
+        type GenericSignature = sp_core::sr25519::Signature;
     }
 
     // implemented for mock runtime in test
@@ -105,8 +106,8 @@ pub mod crypto {
     for TestAuthId
     {
         type RuntimeAppPublic = Public;
-        type GenericSignature = sp_core::sr25519::Signature;
         type GenericPublic = sp_core::sr25519::Public;
+        type GenericSignature = sp_core::sr25519::Signature;
     }
 }
 
@@ -115,48 +116,29 @@ pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
     use frame_support::pallet_prelude::*;
+    use sp_runtime::traits::BlockNumber;
 
     #[pallet::pallet]
     // #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
 
-    /// This pallet's configuration trait
     #[pallet::config]
     pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config {
-        /// The identifier type for an offchain worker.
+        /*
+            The identifier type for an offchain worker.
+            Use for when using OCW to make a sigened transaction
+         */
         type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
-
-        /// The overarching event type.
-        /// type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
-        /// Event type.
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
         // Configuration parameters
-
-        /// A grace period after we send transaction.
-        ///
-        /// To avoid sending too many transactions, we only attempt to send one
-        /// every `GRACE_PERIOD` blocks. We use Local Storage to coordinate
-        /// sending between distinct runs of this offchain worker.
         #[pallet::constant]
         type GracePeriod: Get<BlockNumberFor<Self>>;
-
-        /// Number of blocks of cooldown after unsigned transaction is included.
-        ///
-        /// This ensures that we only accept unsigned transactions once, every `UnsignedInterval`
-        /// blocks.
         #[pallet::constant]
         type UnsignedInterval: Get<BlockNumberFor<Self>>;
-
-        /// A configuration for base priority of unsigned transactions.
-        ///
-        /// This is exposed so that it can be tuned for particular runtime, when
-        /// multiple pallets send unsigned transactions.
         #[pallet::constant]
         type UnsignedPriority: Get<TransactionPriority>;
 
-        /// Maximum number of prices.
         #[pallet::constant]
         type MaxPrices: Get<u32>;
     }
@@ -164,49 +146,27 @@ pub mod pallet {
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-        /// Offchain Worker entry point.
-        ///
-        /// By implementing `fn offchain_worker` you declare a new offchain worker.
-        /// This function will be called when the node is fully synced and a new best block is
-        /// succesfuly imported.
-        /// Note that it's not guaranteed for offchain workers to run on EVERY block, there might
-        /// be cases where some blocks are skipped, or for some the worker runs twice (re-orgs),
-        /// so the code should be able to handle that.
-        /// You can use `Local Storage` API to coordinate runs of the worker.
         fn offchain_worker(block_number: BlockNumberFor<T>) {
-            // Note that having logs compiled to WASM may cause the size of the blob to increase
-            // significantly. You can use `RuntimeDebug` custom derive to hide details of the types
-            // in WASM. The `sp-api` crate also provides a feature `disable-logging` to disable
-            // all logging and thus, remove any logging from the WASM.
             log::info!("Hello World from offchain workers!");
-
-            // Since off-chain workers are just part of the runtime code, they have direct access
-            // to the storage and other included pallets.
-            //
-            // We can easily import `frame_system` and retrieve a block hash of the parent block.
             let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
             log::debug!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
-
-            // It's a good practice to keep `fn offchain_worker()` function minimal, and move most
-            // of the code to separate `impl` block.
-            // Here we call a helper function to calculate current average price.
-            // This function reads storage entries of the current state.
             let average: Option<u32> = Self::average_price();
             log::debug!("Current price: {:?}", average);
 
             // For this example we are going to send both signed and unsigned transactions
             // depending on the block number.
             // Usually it's enough to choose one or the other.
-            let should_send = Self::choose_transaction_type(block_number);
-            let res = match should_send {
-                TransactionType::Signed => Self::fetch_price_and_send_signed(),
-                TransactionType::UnsignedForAny =>
-                    Self::fetch_price_and_send_unsigned_for_any_account(block_number),
-                TransactionType::UnsignedForAll =>
-                    Self::fetch_price_and_send_unsigned_for_all_accounts(block_number),
-                TransactionType::Raw => Self::fetch_price_and_send_raw_unsigned(block_number),
-                TransactionType::None => Ok(()),
-            };
+            // let should_send = Self::choose_transaction_type(block_number);
+            // let res = match should_send {
+            //     TransactionType::Signed => Self::fetch_price_and_send_signed(),
+            //     TransactionType::UnsignedForAny =>
+            //         Self::fetch_price_and_send_unsigned_for_any_account(block_number),
+            //     TransactionType::UnsignedForAll =>
+            //         Self::fetch_price_and_send_unsigned_for_all_accounts(block_number),
+            //     TransactionType::Raw => Self::fetch_price_and_send_raw_unsigned(block_number),
+            //     TransactionType::None => Ok(()),
+            // };
+            let res = Self::fetch_price_and_send_raw_unsigned(block_number);
             if let Err(e) = res {
                 log::error!("Error: {}", e);
             }
@@ -216,20 +176,6 @@ pub mod pallet {
     /// A public part of the pallet.
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// Submit new price to the list.
-        ///
-        /// This method is a public function of the module and can be called from within
-        /// a transaction. It appends given `price` to current list of prices.
-        /// In our example the `offchain worker` will create, sign & submit a transaction that
-        /// calls this function passing the price.
-        ///
-        /// The transaction needs to be signed (see `ensure_signed`) check, so that the caller
-        /// pays a fee to execute it.
-        /// This makes sure that it's not easy (or rather cheap) to attack the chain by submitting
-        /// excesive transactions, but note that it doesn't ensure the price oracle is actually
-        /// working and receives (and provides) meaningful data.
-        /// This example is not focused on correctness of the oracle itself, but rather its
-        /// purpose is to showcase offchain worker capabilities.
         #[pallet::weight(0)]
         pub fn submit_price(origin: OriginFor<T>, price: u32) -> DispatchResultWithPostInfo {
             // Retrieve sender of the transaction.
@@ -238,23 +184,6 @@ pub mod pallet {
             Self::add_price(Some(who), price);
             Ok(().into())
         }
-
-        /// Submit new price to the list via unsigned transaction.
-        ///
-        /// Works exactly like the `submit_price` function, but since we allow sending the
-        /// transaction without a signature, and hence without paying any fees,
-        /// we need a way to make sure that only some transactions are accepted.
-        /// This function can be called only once every `T::UnsignedInterval` blocks.
-        /// Transactions that call that function are de-duplicated on the pool level
-        /// via `validate_unsigned` implementation and also are rendered invalid if
-        /// the function has already been called in current "session".
-        ///
-        /// It's important to specify `weight` for unsigned calls as well, because even though
-        /// they don't charge fees, we still don't want a single block to contain unlimited
-        /// number of such transactions.
-        ///
-        /// This example is not focused on correctness of the oracle itself, but rather its
-        /// purpose is to showcase offchain worker capabilities.
         #[pallet::weight(0)]
         pub fn submit_price_unsigned(
             origin: OriginFor<T>,
@@ -294,6 +223,9 @@ pub mod pallet {
     pub enum Event<T: Config> {
         /// Event generated when new price is accepted to contribute to the average.
         NewPrice { price: u32, maybe_who: Option<T::AccountId> },
+        UnsignedTx {
+            when: BlockNumberFor<T>
+        }
     }
 
     #[pallet::validate_unsigned]
@@ -330,8 +262,12 @@ pub mod pallet {
     ///
     /// This is used to calculate average price, should have bounded size.
     #[pallet::storage]
-    #[pallet::getter(fn prices)]
+    #[pallet::getter(fn get_prices)]
     pub(super) type Prices<T: Config> = StorageValue<_, BoundedVec<u32, T::MaxPrices>, ValueQuery>;
+
+    // #[pallet::storage]
+    // #[pallet::getter(fn get_data_hash)]
+    // pub(super) type DataHash<T: Config> = ;
 
     /// Defines the block when next unsigned transaction will be accepted.
     ///
@@ -476,9 +412,10 @@ impl<T: Config> Pallet<T> {
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
-        if next_unsigned_at > block_number {
-            return Err("Too early to send unsigned transaction")
-        }
+        // log::info!("Next unsigned at block: {:#?}, current block at: {:#?} ", next_unsigned_at,block_number);
+        // if next_unsigned_at > block_number {
+        //     return Err("Too early to send unsigned transaction")
+        // }
 
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
@@ -497,9 +434,12 @@ impl<T: Config> Pallet<T> {
         // implement unsigned validation logic, as any mistakes can lead to opening DoS or spam
         // attack vectors. See validation logic docs for more details.
         //
+        log::info!("Data fetced: {}, preparing to sent transaction",price);
         SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
             .map_err(|()| "Unable to submit unsigned transaction.")?;
-
+        Self::deposit_event(Event::<T>::UnsignedTx {
+                when: block_number
+        });
         Ok(())
     }
 
@@ -562,17 +502,16 @@ impl<T: Config> Pallet<T> {
                 return Err("Unable to submit transaction")
             }
         }
-
         Ok(())
     }
 
     /// Fetch current price and return the result in cents.
     fn fetch_price() -> Result<u32, http::Error> {
         // We want to keep the offchain worker execution time reasonable, so we set a hard-coded
-        // deadline to 2s to complete the external call.
+        // deadline to 5s to complete the external call.
         // You can also wait idefinitely for the response, however you may still get a timeout
         // coming from the host machine.
-        let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
+        let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(5_000));
         // Initiate an external HTTP GET request.
         // This is using high-level wrappers from `sp_runtime`, for the low-level calls that
         // you can find in `sp_io`. The API is trying to be similar to `reqwest`, but
@@ -608,7 +547,7 @@ impl<T: Config> Pallet<T> {
             log::warn!("No UTF8 body");
             http::Error::Unknown
         })?;
-
+        log::info!("RESPONSE BODY: {:#?}", body_str.to_string());
         let price = match Self::parse_price(body_str) {
             Some(price) => Ok(price),
             None => {
@@ -617,7 +556,7 @@ impl<T: Config> Pallet<T> {
             },
         }?;
 
-        log::warn!("Got price: {} cents", price);
+        log::info!("Got price: {} cents", price);
 
         Ok(price)
     }
@@ -637,9 +576,9 @@ impl<T: Config> Pallet<T> {
             },
             _ => return None,
         };
-
-        let exp = price.fraction_length.saturating_sub(2);
-        Some(price.integer as u32 * 100 + (price.fraction / 10_u64.pow(exp)) as u32)
+        let exp = price.integer;
+        log::info!("Parse res: {}", exp);
+        Some(price.integer as u32)
     }
 
     /// Add new price to the list.
@@ -674,10 +613,14 @@ impl<T: Config> Pallet<T> {
     ) -> TransactionValidity {
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
         if &next_unsigned_at > block_number {
+            log::warn!("Unsigned Transaction period still in cool down");
+            log::warn!("block number: {:#?}, next unsigned at: {:#?}",block_number,next_unsigned_at);
             return InvalidTransaction::Stale.into()
         }
         let current_block = <system::Pallet<T>>::block_number();
         if &current_block < block_number {
+            log::warn!("Unsigned Transaction period corrupted");
+            log::warn!("block number: {:#?}, next unsigned at: {:#?}",block_number,next_unsigned_at);
             return InvalidTransaction::Future.into()
         }
         let avg_price = Self::average_price()

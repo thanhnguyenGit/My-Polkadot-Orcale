@@ -24,7 +24,7 @@ function create_dev_chain_specs() {
 function run_omni_node() {
   if command -v polkadot-omni-node >/dev/null 2>&1; then
     echo "Running omni node with log"
-    polkadot-omni-node --chain ./chain_spec.json --dev --offchain-worker always -l info
+    polkadot-omni-node --chain ./chain_spec.json --dev --offchain-worker always --log offchain=trace,logger=trace
     return $?
   else
     echo "Polkadot omni node crate is not installed"
