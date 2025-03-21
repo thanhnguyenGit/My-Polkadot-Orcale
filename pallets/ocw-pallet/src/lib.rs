@@ -1,48 +1,3 @@
-// This file is part of Substrate.
-
-// Copyright (C) 2020-2022 Parity Technologies (UK) Ltd.
-// SPDX-License-Identifier: Apache-2.0
-
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// 	http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-//! <!-- markdown-link-check-disable -->
-//! # Offchain Worker Example Pallet
-//!
-//! The Offchain Worker Example: A simple pallet demonstrating
-//! concepts, APIs and structures common to most offchain workers.
-//!
-//! Run `cargo doc --package pallet-example-offchain-worker --open` to view this module's
-//! documentation.
-//!
-//! - [`Config`]
-//! - [`Call`]
-//! - [`Pallet`]
-//!
-//! **This pallet serves as an example showcasing Substrate off-chain worker and is not meant to
-//! be used in production.**
-//!
-//! ## Overview
-//!
-//! In this example we are going to build a very simplistic, naive and definitely NOT
-//! production-ready oracle for BTC/USD price.
-//! Offchain Worker (OCW) will be triggered after every block, fetch the current price
-//! and prepare either signed or unsigned transaction to feed the result back on chain.
-//! The on-chain logic will simply aggregate the results and store last `64` values to compute
-//! the average price.
-//! Additional logic in OCW is put in place to prevent spamming the network with both signed
-//! and unsigned transactions, and custom `UnsignedValidator` makes sure that there is only
-//! one unsigned transaction floating in the network.
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use codec::{Decode, Encode};
@@ -116,7 +71,7 @@ pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
     use frame_support::pallet_prelude::*;
-    use sp_runtime::traits::BlockNumber;
+    use sp_runtime::traits::{ensure_pow, BlockNumber};
 
     #[pallet::pallet]
     // #[pallet::generate_store(pub(super) trait Store)]
@@ -143,6 +98,51 @@ pub mod pallet {
         type MaxPrices: Get<u32>;
     }
 
+
+    /// A vector of recently submitted prices.
+    ///
+    /// This is used to calculate average price, should have bounded size.
+    #[pallet::storage]
+    #[pallet::getter(fn get_prices)]
+    pub(super) type Prices<T: Config> = StorageValue<_, BoundedVec<u32, T::MaxPrices>, ValueQuery>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn get_api_url)]
+    pub(super) type ApiURLStore<T: Config> = StorageDoubleMap<_,Blake2_128Concat,T::AccountId, Blake2_128Concat,u32, BoundedVec<u8,ConstU32<256>>,ValueQuery>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn get_hash_value)]
+    pub(super) type HashStore<T: Config> = StorageMap<_, Blake2_128Concat,u32,T::Hash,OptionQuery>;
+
+    /// Defines the block when next unsigned transaction will be accepted.
+    ///
+    /// To prevent spam of unsigned (and unpayed!) transactions on the network,
+    /// we only allow one transaction every `T::UnsignedInterval` blocks.
+    /// This storage entry defines when new transaction is going to be accepted.
+    #[pallet::storage]
+    #[pallet::getter(fn next_unsigned_at)]
+    pub(super) type NextUnsignedAt<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
+
+    /// Events for the pallet.
+    #[pallet::event]
+    #[pallet::generate_deposit(pub(super) fn deposit_event)]
+    pub enum Event<T: Config> {
+        /// Event generated when new price is accepted to contribute to the average.
+        NewPrice { price: u32, maybe_who: Option<T::AccountId> },
+        UnsignedTx {
+            when: BlockNumberFor<T>
+        },
+        AddNewUrl {
+            who: T::AccountId,
+            size: u32
+        }
+    }
+
+    #[pallet::error]
+    pub enum Error<T> {
+        UnresolveOrigin,
+        UrlTooLong,
+    }
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
@@ -215,16 +215,32 @@ pub mod pallet {
             <NextUnsignedAt<T>>::put(current_block + T::UnsignedInterval::get());
             Ok(().into())
         }
-    }
-
-    /// Events for the pallet.
-    #[pallet::event]
-    #[pallet::generate_deposit(pub(super) fn deposit_event)]
-    pub enum Event<T: Config> {
-        /// Event generated when new price is accepted to contribute to the average.
-        NewPrice { price: u32, maybe_who: Option<T::AccountId> },
-        UnsignedTx {
-            when: BlockNumberFor<T>
+        #[pallet::weight(0)]
+        pub fn submit_api_url(origin : OriginFor<T>, topic_id: u32,api_url: String) -> DispatchResultWithPostInfo {
+            let _singer = match ensure_signed_or_root(origin)? {
+                Some(origin) => {
+                    let api_url_bytes: BoundedVec<u8, ConstU32<256>> = api_url
+                        .as_bytes()
+                        .to_vec()
+                        .try_into()
+                        .map_err(|_| {
+                            log::error!("Url too long");
+                            Error::<T>::UrlTooLong
+                        }).expect("Good");
+                    let url_size = api_url_bytes.len() as u32;
+                    ApiURLStore::<T>::insert(origin.clone(), topic_id, api_url_bytes);
+                    Self::deposit_event(Event::<T>::AddNewUrl {
+                        who: origin,
+                        size: url_size
+                    });
+                },
+                None => {
+                    log::error!("Unresolve origin, extrensic called failed");
+                    Error::<T>::UnresolveOrigin;
+                    return Err(DispatchError::BadOrigin.into());
+                }
+            };
+            Ok(().into())
         }
     }
 
@@ -258,25 +274,6 @@ pub mod pallet {
         }
     }
 
-    /// A vector of recently submitted prices.
-    ///
-    /// This is used to calculate average price, should have bounded size.
-    #[pallet::storage]
-    #[pallet::getter(fn get_prices)]
-    pub(super) type Prices<T: Config> = StorageValue<_, BoundedVec<u32, T::MaxPrices>, ValueQuery>;
-
-    // #[pallet::storage]
-    // #[pallet::getter(fn get_data_hash)]
-    // pub(super) type DataHash<T: Config> = ;
-
-    /// Defines the block when next unsigned transaction will be accepted.
-    ///
-    /// To prevent spam of unsigned (and unpayed!) transactions on the network,
-    /// we only allow one transaction every `T::UnsignedInterval` blocks.
-    /// This storage entry defines when new transaction is going to be accepted.
-    #[pallet::storage]
-    #[pallet::getter(fn next_unsigned_at)]
-    pub(super) type NextUnsignedAt<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
 }
 
 /// Payload used by this example crate to hold price
@@ -384,7 +381,7 @@ impl<T: Config> Pallet<T> {
         }
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price().map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // Using `send_signed_transaction` associated type we create and submit a transaction
         // representing the call, we've just created.
@@ -412,14 +409,14 @@ impl<T: Config> Pallet<T> {
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
-        // log::info!("Next unsigned at block: {:#?}, current block at: {:#?} ", next_unsigned_at,block_number);
-        // if next_unsigned_at > block_number {
-        //     return Err("Too early to send unsigned transaction")
-        // }
+        if next_unsigned_at > block_number {
+            log::info!("Next unsigned at block: {:#?}, current block at: {:#?} ", next_unsigned_at,block_number);
+            return Err("Too early to send unsigned transaction")
+        }
 
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price().map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // Received price is wrapped into a call to `submit_price_unsigned` public function of this
         // pallet. This means that the transaction, when executed, will simply call that function
@@ -456,7 +453,7 @@ impl<T: Config> Pallet<T> {
 
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price().map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // -- Sign using any account
         let (_, result) = Signer::<T, T::AuthorityId>::any_account()
@@ -483,10 +480,9 @@ impl<T: Config> Pallet<T> {
         if next_unsigned_at > block_number {
             return Err("Too early to send unsigned transaction")
         }
-
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price().map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // -- Sign using all accounts
         let transaction_results = Signer::<T, T::AuthorityId>::all_accounts()
@@ -504,45 +500,28 @@ impl<T: Config> Pallet<T> {
         }
         Ok(())
     }
+    fn fetch_data_and_store_hash(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
+        let next_unsigned_at = <NextUnsignedAt<T>>::get();
+        if next_unsigned_at > block_number {
+            return Err("Too early to send unsigned transaction")
+        }
+
+        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
+        Ok(())
+    }
 
     /// Fetch current price and return the result in cents.
-    fn fetch_price() -> Result<u32, http::Error> {
-        // We want to keep the offchain worker execution time reasonable, so we set a hard-coded
-        // deadline to 5s to complete the external call.
-        // You can also wait idefinitely for the response, however you may still get a timeout
-        // coming from the host machine.
+    fn fetch_price(url : &str) -> Result<u32, http::Error> {
         let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(5_000));
-        // Initiate an external HTTP GET request.
-        // This is using high-level wrappers from `sp_runtime`, for the low-level calls that
-        // you can find in `sp_io`. The API is trying to be similar to `reqwest`, but
-        // since we are running in a custom WASM execution environment we can't simply
-        // import the library here.
         let request =
-            http::Request::get("https://catfact.ninja/fact");
-        // We set the deadline for sending of the request, note that awaiting response can
-        // have a separate deadline. Next we send the request, before that it's also possible
-        // to alter request headers or stream body content in case of non-GET requests.
+            http::Request::get(url);
         let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
-
-        // The request is already being processed by the host, we are free to do anything
-        // else in the worker (we can send multiple concurrent requests too).
-        // At some point however we probably want to check the response though,
-        // so we can block current thread and wait for it to finish.
-        // Note that since the request is being driven by the host, we don't have to wait
-        // for the request to have it complete, we will just not read the response.
         let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
-        // Let's check the status code before we proceed to reading the response.
         if response.code != 200 {
             log::warn!("Unexpected status code: {}", response.code);
             return Err(http::Error::Unknown)
         }
-
-        // Next we want to fully read the response body and collect it to a vector of bytes.
-        // Note that the return object allows you to read the body in chunks as well
-        // with a way to control the deadline.
         let body = response.body().collect::<Vec<u8>>();
-
-        // Create a str slice from the body.
         let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
             log::warn!("No UTF8 body");
             http::Error::Unknown
@@ -551,7 +530,7 @@ impl<T: Config> Pallet<T> {
         let price = match Self::parse_price(body_str) {
             Some(price) => Ok(price),
             None => {
-                log::warn!("Unable to extract price from the response: {:?}", body_str);
+                log::warn!("Unable to extract data from the response: {:?}", body_str);
                 Err(http::Error::Unknown)
             },
         }?;
@@ -634,7 +613,7 @@ impl<T: Config> Pallet<T> {
             .propagate(true)
             .build()
     }
-}
+ }
 
 #[cfg(test)]
 mod mock;
