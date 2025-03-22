@@ -13,19 +13,17 @@ use frame_system::pallet_prelude::BlockNumberFor;
 pub use pallet::*;
 use lite_json::json::JsonValue;
 use sp_core::crypto::KeyTypeId;
-use sp_runtime::{
-    offchain::{
-        http,
-        storage::{MutateStorageError, StorageRetrievalError, StorageValueRef},
-        Duration,
-    },
-    traits::Zero,
-    transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction},
-    RuntimeDebug,
-};
+use sp_runtime::{offchain::{
+    http,
+    storage::{MutateStorageError, StorageRetrievalError, StorageValueRef},
+    Duration,
+}, traits::Zero, transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction}, BoundedVec, RuntimeDebug};
 use sp_std::vec::Vec;
 extern crate alloc;
 use alloc::string::{String,ToString};
+use sp_core::ConstU32;
+use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
+
 /// Defines application identifier for crypto keys of this module.
 ///
 /// Every module that deals with signatures needs to declare its unique identifier for
@@ -112,7 +110,7 @@ pub mod pallet {
 
     #[pallet::storage]
     #[pallet::getter(fn get_hash_value)]
-    pub(super) type HashStore<T: Config> = StorageMap<_, Blake2_128Concat,u32,T::Hash,OptionQuery>;
+    pub(super) type HashStore<T: Config> = StorageDoubleMap<_, Blake2_128Concat,u32,Blake2_128Concat,BoundedVec<u8, ConstU32<32>>,T::Hash,OptionQuery>;
 
     /// Defines the block when next unsigned transaction will be accepted.
     ///
@@ -142,8 +140,11 @@ pub mod pallet {
     pub enum Error<T> {
         UnresolveOrigin,
         UrlTooLong,
+        BytesTooLong,
     }
-
+    pub const OCW_STORAGE_KEY : &[u8] = b"ocw-worker";
+    pub const LOCK_BLOCK_EXPIRATION: u32 = 3;
+    pub const LOCK_TIMEOUT_EXPIRATION: u64 = 5000;
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn offchain_worker(block_number: BlockNumberFor<T>) {
@@ -166,7 +167,8 @@ pub mod pallet {
             //     TransactionType::Raw => Self::fetch_price_and_send_raw_unsigned(block_number),
             //     TransactionType::None => Ok(()),
             // };
-            let res = Self::fetch_price_and_send_raw_unsigned(block_number);
+
+            let res = Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number);
             if let Err(e) = res {
                 log::error!("Error: {}", e);
             }
@@ -306,7 +308,7 @@ impl<T: Config> Pallet<T> {
     /// and local storage usage.
     ///
     /// Returns a type of transaction that should be produced in current run.
-    fn choose_transaction_type(block_number: BlockNumberFor<T>) -> TransactionType {
+    fn ocw_do_choose_transaction_type(block_number: BlockNumberFor<T>) -> TransactionType {
         /// A friendlier name for the error that is going to be returned in case we are in the grace
         /// period.
         const RECENTLY_SENT: () = ();
@@ -372,7 +374,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// A helper function to fetch the price and send signed transaction.
-    fn fetch_price_and_send_signed() -> Result<(), &'static str> {
+    fn ocw_do_fetch_price_and_send_signed() -> Result<(), &'static str> {
         let signer = Signer::<T, T::AuthorityId>::all_accounts();
         if !signer.can_sign() {
             return Err(
@@ -405,7 +407,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// A helper function to fetch the price and send a raw unsigned transaction.
-    fn fetch_price_and_send_raw_unsigned(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
+    fn ocw_do_fetch_price_and_send_raw_unsigned(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
@@ -413,7 +415,6 @@ impl<T: Config> Pallet<T> {
             log::info!("Next unsigned at block: {:#?}, current block at: {:#?} ", next_unsigned_at,block_number);
             return Err("Too early to send unsigned transaction")
         }
-
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
         let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
@@ -441,7 +442,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// A helper function to fetch the price, sign payload and send an unsigned transaction
-    fn fetch_price_and_send_unsigned_for_any_account(
+    fn ocw_do_fetch_price_and_send_unsigned_for_any_account(
         block_number: BlockNumberFor<T>,
     ) -> Result<(), &'static str> {
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
@@ -471,7 +472,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// A helper function to fetch the price, sign payload and send an unsigned transaction
-    fn fetch_price_and_send_unsigned_for_all_accounts(
+    fn ocw_do_fetch_price_and_send_unsigned_for_all_accounts(
         block_number: BlockNumberFor<T>,
     ) -> Result<(), &'static str> {
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
@@ -522,6 +523,16 @@ impl<T: Config> Pallet<T> {
             return Err(http::Error::Unknown)
         }
         let body = response.body().collect::<Vec<u8>>();
+        let body_bounded: BoundedVec<u8, ConstU32<512>> = body
+            .as_bytes()
+            .to_vec()
+            .try_into()
+            .map_err(|_| {
+                log::error!("Response data too long");
+                Error::<T>::BytesTooLong
+            }).expect("Good");
+        Self::add_data_to_offchain_storage(OCW_STORAGE_KEY,&body_bounded);
+        log::info!("RESPONSE BODY RAW: {:#?}", body);
         let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
             log::warn!("No UTF8 body");
             http::Error::Unknown
@@ -606,12 +617,29 @@ impl<T: Config> Pallet<T> {
             .map(|price| if &price > new_price { price - new_price } else { new_price - price })
             .unwrap_or(0);
 
-        ValidTransaction::with_tag_prefix("ExampleOffchainWorker")
+        ValidTransaction::with_tag_prefix("OffchainWorker")
             .priority(T::UnsignedPriority::get().saturating_add(avg_price as _))
             .and_provides(next_unsigned_at)
             .longevity(5)
             .propagate(true)
             .build()
+    }
+    fn add_data_to_offchain_storage(key: &[u8],data: &[u8]) {
+        log::info!("Adding data to offchain storage");
+        // notice the storage is shared across all OCWs.
+        let persistent_storage = StorageValueRef::persistent(key);
+        if let Ok(Some(value)) = persistent_storage.get::<BoundedVec<u8,ConstU32<512>>>() {
+            log::info!("Value already exist of the key {:?}: {:?}",OCW_STORAGE_KEY,value);
+        }
+        let mut lock = StorageLock::<BlockAndTime<T>>::with_block_and_time_deadline(
+            key,
+            LOCK_BLOCK_EXPIRATION,
+            Duration::from_millis(LOCK_TIMEOUT_EXPIRATION)
+        );
+        if let Ok(_guard) = lock.try_lock() {
+            persistent_storage.set(data);
+            log::info!("Data: {:?} stored", data)
+        }
     }
  }
 
