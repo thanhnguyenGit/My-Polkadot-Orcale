@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use alloc::rc::Rc;
 use codec::{Decode, Encode};
 use frame_support::traits::Get;
 use frame_system::{
@@ -22,7 +23,10 @@ use sp_std::vec::Vec;
 extern crate alloc;
 use alloc::string::{String,ToString};
 use sp_core::ConstU32;
+use sp_core::offchain::StorageKind;
+use sp_io::offchain::timestamp;
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
+use sp_runtime::traits::Hash;
 
 /// Defines application identifier for crypto keys of this module.
 ///
@@ -64,6 +68,7 @@ pub mod crypto {
     }
 }
 
+/// everything inside mode pallet is running in no-std.
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
@@ -110,7 +115,7 @@ pub mod pallet {
 
     #[pallet::storage]
     #[pallet::getter(fn get_hash_value)]
-    pub(super) type HashStore<T: Config> = StorageDoubleMap<_, Blake2_128Concat,u32,Blake2_128Concat,BoundedVec<u8, ConstU32<32>>,T::Hash,OptionQuery>;
+    pub(super) type HashStore<T: Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8, ConstU32<256>>,T::Hash,OptionQuery>;
 
     /// Defines the block when next unsigned transaction will be accepted.
     ///
@@ -141,6 +146,7 @@ pub mod pallet {
         UnresolveOrigin,
         UrlTooLong,
         BytesTooLong,
+        HashingProblem
     }
     pub const OCW_STORAGE_KEY : &[u8] = b"ocw-worker";
     pub const LOCK_BLOCK_EXPIRATION: u32 = 3;
@@ -299,6 +305,10 @@ enum TransactionType {
     UnsignedForAll,
     Raw,
     None,
+}
+enum StorageType {
+    Persistent,
+    Local
 }
 
 impl<T: Config> Pallet<T> {
@@ -513,31 +523,22 @@ impl<T: Config> Pallet<T> {
 
     /// Fetch current price and return the result in cents.
     fn fetch_price(url : &str) -> Result<u32, http::Error> {
-        let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(5_000));
-        let request =
-            http::Request::get(url);
-        let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
-        let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
-        if response.code != 200 {
-            log::warn!("Unexpected status code: {}", response.code);
-            return Err(http::Error::Unknown)
-        }
-        let body = response.body().collect::<Vec<u8>>();
-        let body_bounded: BoundedVec<u8, ConstU32<512>> = body
-            .as_bytes()
-            .to_vec()
-            .try_into()
-            .map_err(|_| {
-                log::error!("Response data too long");
-                Error::<T>::BytesTooLong
-            }).expect("Good");
-        Self::add_data_to_offchain_storage(OCW_STORAGE_KEY,&body_bounded);
+        let body = Self::response_from_http_url(url,5_000)?;
         log::info!("RESPONSE BODY RAW: {:#?}", body);
         let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
             log::warn!("No UTF8 body");
             http::Error::Unknown
         })?;
         log::info!("RESPONSE BODY: {:#?}", body_str.to_string());
+        let time_stamp = timestamp().unix_millis();
+        let block_height = <frame_system::Pallet<T>>::block_number();
+        let key = format!("ocw:key:{}:{}:{}", time_stamp, block_height,T::Hashing::hash(&body)).as_bytes();
+        if !HashStore::<T>::contains_key(key.clone()) {
+            log::debug!("Hash store has no key {:?}", key);
+            Self::build_local_storage_for_http_response(StorageKind::PERSISTENT, key.clone(), &body);
+            HashStore::<T>::insert(key, T::Hashing::hash(&body));
+            log::info!("Succes storing data onchain and offchain.")
+        }
         let price = match Self::parse_price(body_str) {
             Some(price) => Ok(price),
             None => {
@@ -624,11 +625,33 @@ impl<T: Config> Pallet<T> {
             .propagate(true)
             .build()
     }
-    fn add_data_to_offchain_storage(key: &[u8],data: &[u8]) {
+    fn response_from_http_url(url: &str, time_to_live: u64) -> Result< Vec<u8>, http::Error> {
+        let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(time_to_live));
+        let request =
+            http::Request::get(url);
+        let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
+        let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+        if response.code != 200 {
+            log::warn!("Unexpected status code: {}", response.code);
+            return Err(http::Error::Unknown)
+        }
+        Ok(response.body().collect::<Vec<u8>>())
+    }
+    fn build_local_storage_for_http_response(storage_type: StorageKind,key : &[u8],data: &[u8]) {
+        match storage_type {
+            StorageKind::PERSISTENT => {
+                let storage = StorageValueRef::persistent(key);
+                Self::add_data_to_offchain_storage(storage,key,data);
+            },
+            StorageKind::LOCAL => {
+                let storage = StorageValueRef::local(key);
+                Self::add_data_to_offchain_storage(storage,key,data);
+            }
+        }
+    }
+    fn add_data_to_offchain_storage(storage: StorageValueRef,key: &[u8],data: &[u8]) {
         log::info!("Adding data to offchain storage");
-        // notice the storage is shared across all OCWs.
-        let persistent_storage = StorageValueRef::persistent(key);
-        if let Ok(Some(value)) = persistent_storage.get::<BoundedVec<u8,ConstU32<512>>>() {
+        if let Ok(Some(value)) = storage.get::<BoundedVec<u8,ConstU32<512>>>() {
             log::info!("Value already exist of the key {:?}: {:?}",OCW_STORAGE_KEY,value);
         }
         let mut lock = StorageLock::<BlockAndTime<T>>::with_block_and_time_deadline(
@@ -637,7 +660,7 @@ impl<T: Config> Pallet<T> {
             Duration::from_millis(LOCK_TIMEOUT_EXPIRATION)
         );
         if let Ok(_guard) = lock.try_lock() {
-            persistent_storage.set(data);
+            storage.set(&data);
             log::info!("Data: {:?} stored", data)
         }
     }

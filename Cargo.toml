@@ -6,7 +6,7 @@ repository = "https://github.com/paritytech/polkadot-sdk-parachain-template.git"
 edition = "2021"
 
 [workspace]
-members = ["node", "pallets/custom-pallet","pallets/ocw-pallet", "pallets/template", "runtime"]
+members = ["node", "pallets/custom-pallet","pallets/ocw-pallet", "pallets/template", "runtime", "utils/offchain-utils"]
 resolver = "2"
 
 [workspace.dependencies]
