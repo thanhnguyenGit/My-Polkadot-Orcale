@@ -23,11 +23,12 @@ use sp_std::vec::Vec;
 extern crate alloc;
 use alloc::string::{String,ToString};
 use sp_core::ConstU32;
+use sp_core::hexdisplay::AsBytesRef;
 use sp_core::offchain::StorageKind;
-use sp_io::offchain::timestamp;
+use sp_io::offchain::{timestamp,local_storage_clear,local_storage_get,local_storage_set,local_storage_compare_and_set};
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
-use sp_runtime::traits::Hash;
-
+use sp_runtime::traits::{BlockNumberProvider, Hash};
+use sp_runtime::format;
 /// Defines application identifier for crypto keys of this module.
 ///
 /// Every module that deals with signatures needs to declare its unique identifier for
@@ -75,7 +76,6 @@ pub mod pallet {
     use frame_system::pallet_prelude::*;
     use frame_support::pallet_prelude::*;
     use sp_runtime::traits::{ensure_pow, BlockNumber};
-
     #[pallet::pallet]
     // #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
@@ -189,7 +189,7 @@ pub mod pallet {
             // Retrieve sender of the transaction.
             let who = ensure_signed(origin)?;
             // Add the price to the on-chain list.
-            Self::add_price(Some(who), price);
+            Self::add_data(Some(who), price);
             Ok(().into())
         }
         #[pallet::weight(0)]
@@ -201,7 +201,7 @@ pub mod pallet {
             // This ensures that the function can only be called via unsigned transaction.
             ensure_none(origin)?;
             // Add the price to the on-chain list, but mark it as coming from an empty address.
-            Self::add_price(None, price);
+            Self::add_data(None, price);
             // now increment the block number at which we expect next unsigned transaction.
             let current_block = <system::Pallet<T>>::block_number();
             <NextUnsignedAt<T>>::put(current_block + T::UnsignedInterval::get());
@@ -217,7 +217,7 @@ pub mod pallet {
             // This ensures that the function can only be called via unsigned transaction.
             ensure_none(origin)?;
             // Add the price to the on-chain list, but mark it as coming from an empty address.
-            Self::add_price(None, price_payload.price);
+            Self::add_data(None, price_payload.price);
             // now increment the block number at which we expect next unsigned transaction.
             let current_block = <system::Pallet<T>>::block_number();
             <NextUnsignedAt<T>>::put(current_block + T::UnsignedInterval::get());
@@ -326,7 +326,7 @@ impl<T: Config> Pallet<T> {
         // Start off by creating a reference to Local Storage value.
         // Since the local storage is common for all offchain workers, it's a good practice
         // to prepend your entry with the module name.
-        let val = StorageValueRef::persistent(b"example_ocw::last_send");
+        let val = StorageValueRef::persistent(b"ocw-pallet::last_send");
         // The Local Storage is persisted and shared between runs of the offchain workers,
         // and offchain workers may run concurrently. We can use the `mutate` function, to
         // write a storage entry in an atomic fashion. Under the hood it uses `compare_and_set`
@@ -393,8 +393,7 @@ impl<T: Config> Pallet<T> {
         }
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
-
+        let price = Self::fetch_data("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
         // Using `send_signed_transaction` associated type we create and submit a transaction
         // representing the call, we've just created.
         // Submit signed will return a vector of results for all accounts that were found in the
@@ -427,7 +426,7 @@ impl<T: Config> Pallet<T> {
         }
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_data("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // Received price is wrapped into a call to `submit_price_unsigned` public function of this
         // pallet. This means that the transaction, when executed, will simply call that function
@@ -464,7 +463,7 @@ impl<T: Config> Pallet<T> {
 
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_data("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // -- Sign using any account
         let (_, result) = Signer::<T, T::AuthorityId>::any_account()
@@ -493,7 +492,7 @@ impl<T: Config> Pallet<T> {
         }
         // Make an external HTTP request to fetch the current price.
         // Note this call will block until response is received.
-        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_data("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
 
         // -- Sign using all accounts
         let transaction_results = Signer::<T, T::AuthorityId>::all_accounts()
@@ -517,14 +516,14 @@ impl<T: Config> Pallet<T> {
             return Err("Too early to send unsigned transaction")
         }
 
-        let price = Self::fetch_price("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
+        let price = Self::fetch_data("https://catfact.ninja/fact").map_err(|_| "Failed to fetch price")?;
         Ok(())
     }
 
     /// Fetch current price and return the result in cents.
-    fn fetch_price(url : &str) -> Result<u32, http::Error> {
+    fn fetch_data(url : &str) -> Result<u32, http::Error> {
         let body = Self::response_from_http_url(url,5_000)?;
-        log::info!("RESPONSE BODY RAW: {:#?}", body);
+        // log::info!("RESPONSE BODY RAW: {:#?}", body);
         let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
             log::warn!("No UTF8 body");
             http::Error::Unknown
@@ -532,14 +531,17 @@ impl<T: Config> Pallet<T> {
         log::info!("RESPONSE BODY: {:#?}", body_str.to_string());
         let time_stamp = timestamp().unix_millis();
         let block_height = <frame_system::Pallet<T>>::block_number();
-        let key = format!("ocw:key:{}:{}:{}", time_stamp, block_height,T::Hashing::hash(&body)).as_bytes();
-        if !HashStore::<T>::contains_key(key.clone()) {
+        let key = format!("ocw-pallet:catfact:{:?}:{:?}:{:?}", time_stamp, block_height,T::Hashing::hash(&body));
+        log::info!("KEY ADDED: {}", key);
+        let key_as_bytes = Self::to_bounded_vec::<_,256>(key.clone()).expect("Data");
+        log::info!("KEY INTO Bytes {:?}", &key_as_bytes);
+        if !HashStore::<T>::contains_key(&key_as_bytes) {
             log::debug!("Hash store has no key {:?}", key);
-            Self::build_local_storage_for_http_response(StorageKind::PERSISTENT, key.clone(), &body);
-            HashStore::<T>::insert(key, T::Hashing::hash(&body));
+            Self::build_local_storage_for_http_response(StorageKind::PERSISTENT, key.as_bytes().clone(), &body);
+            HashStore::<T>::insert(&key_as_bytes, T::Hashing::hash(&body));
             log::info!("Succes storing data onchain and offchain.")
         }
-        let price = match Self::parse_price(body_str) {
+        let price = match Self::parse_data(body_str) {
             Some(price) => Ok(price),
             None => {
                 log::warn!("Unable to extract data from the response: {:?}", body_str);
@@ -552,10 +554,7 @@ impl<T: Config> Pallet<T> {
         Ok(price)
     }
 
-    /// Parse the price from the given JSON string using `lite-json`.
-    ///
-    /// Returns `None` when parsing failed or `Some(price in cents)` when parsing is successful.
-    fn parse_price(price_str: &str) -> Option<u32> {
+    fn parse_data(price_str: &str) -> Option<u32> {
         let val = lite_json::parse_json(price_str);
         let price = match val.ok()? {
             JsonValue::Object(obj) => {
@@ -573,7 +572,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Add new price to the list.
-    fn add_price(maybe_who: Option<T::AccountId>, price: u32) {
+    fn add_data(maybe_who: Option<T::AccountId>, price: u32) {
         log::info!("Adding to the average: {}", price);
         <Prices<T>>::mutate(|prices| {
             if prices.try_push(price).is_err() {
@@ -641,30 +640,31 @@ impl<T: Config> Pallet<T> {
         match storage_type {
             StorageKind::PERSISTENT => {
                 let storage = StorageValueRef::persistent(key);
-                Self::add_data_to_offchain_storage(storage,key,data);
+                log::info!("Adding data to offchain storage");
+                if let Ok(Some(value)) = storage.get::<BoundedVec<u8, ConstU32<512>>>() {
+                    log::info!("Value already exist of the key {:?}: {:?}",OCW_STORAGE_KEY,value);
+                }
+                local_storage_set(storage_type, key, data);
             },
             StorageKind::LOCAL => {
                 let storage = StorageValueRef::local(key);
-                Self::add_data_to_offchain_storage(storage,key,data);
+                log::info!("Adding data to offchain storage");
+                if let Ok(Some(value)) = storage.get::<BoundedVec<u8, ConstU32<512>>>() {
+                    log::info!("Value already exist of the key {:?}: {:?}",OCW_STORAGE_KEY,value);
+                }
+                local_storage_set(storage_type, key, data);
             }
         }
     }
-    fn add_data_to_offchain_storage(storage: StorageValueRef,key: &[u8],data: &[u8]) {
-        log::info!("Adding data to offchain storage");
-        if let Ok(Some(value)) = storage.get::<BoundedVec<u8,ConstU32<512>>>() {
-            log::info!("Value already exist of the key {:?}: {:?}",OCW_STORAGE_KEY,value);
-        }
-        let mut lock = StorageLock::<BlockAndTime<T>>::with_block_and_time_deadline(
-            key,
-            LOCK_BLOCK_EXPIRATION,
-            Duration::from_millis(LOCK_TIMEOUT_EXPIRATION)
-        );
-        if let Ok(_guard) = lock.try_lock() {
-            storage.set(&data);
-            log::info!("Data: {:?} stored", data)
-        }
+    fn to_bounded_vec<I, const N: u32>(input: I) -> Result<BoundedVec<u8, ConstU32<N>>, &'static str>
+    where
+        I: Into<Vec<u8>>,
+    {
+        let vec: Vec<u8> = input.into();
+        BoundedVec::try_from(vec).map_err(|_| "Input data is too large")
     }
- }
+}
+
 
 #[cfg(test)]
 mod mock;
