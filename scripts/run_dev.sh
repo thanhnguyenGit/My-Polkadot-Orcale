@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-HEADLINE="Running dev"
+HEADLINE="Running dev, run this test solo node logic only."
 
 cd "$(dirname "$0")/.." || {
     echo "Failed to change to parent directory"

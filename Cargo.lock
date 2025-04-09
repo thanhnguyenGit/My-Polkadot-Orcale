@@ -6267,10 +6267,6 @@ dependencies = [
 [[package]]
 name = "offchain-utils"
 version = "0.1.0"
-
-[[package]]
-name = "offchain-utils"
-version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e84c2445448213416dad59638206755ca4367b927afdd1a553ba76e2dfc5ce"
 dependencies = [
@@ -6294,7 +6290,7 @@ dependencies = [
  "frame-system",
  "lite-json",
  "log",
- "offchain-utils 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "offchain-utils",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
