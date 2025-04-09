@@ -1,0 +1,27 @@
+[package]
+name = "offchain-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive"] }
+scale-info = { version = "2.2.0", default-features = false, features = ["derive"] }
+log = { version = "0.4", default-features = false }
+sp-runtime = { version = "39.0.1", default-features = false }
+sp-core = { version = "34.0.0", default-features = false }
+sp-io = { version = "38.0.0", default-features = false }
+
+frame-benchmarking = { version = "38.0.0", default-features = false, optional = true } 
+frame-support = { version = "38.0.0", default-features = false }
+frame-system = { version = "38.0.0", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"scale-info/std",
+	"sp-io/std",
+	"frame-support/std",
+	"frame-system/std",
+	"log/std",
+]

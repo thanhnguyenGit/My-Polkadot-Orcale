@@ -24,8 +24,8 @@ extern crate alloc;
 use alloc::string::{String,ToString};
 use sp_core::ConstU32;
 use sp_core::hexdisplay::AsBytesRef;
-use sp_core::offchain::StorageKind;
-use sp_io::offchain::{timestamp,local_storage_clear,local_storage_get,local_storage_set,local_storage_compare_and_set};
+use sp_core::offchain::{StorageKind, Timestamp};
+use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set, sleep_until};
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
 use sp_runtime::traits::{BlockNumberProvider, Hash};
 use sp_runtime::format;
@@ -175,8 +175,12 @@ pub mod pallet {
             // };
 
             let res = Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number);
+            let res2 = Self::ocw_do_fetch_price_and_send_unsigned_for_all_accounts(block_number);
             if let Err(e) = res {
-                log::error!("Error: {}", e);
+                log::error!("Error OCW1: {}", e);
+            }
+            if let Err(e) = res2 {
+                log::error!("Error OCW2: {}", e);
             }
         }
     }
@@ -417,6 +421,9 @@ impl<T: Config> Pallet<T> {
 
     /// A helper function to fetch the price and send a raw unsigned transaction.
     fn ocw_do_fetch_price_and_send_raw_unsigned(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
+        let current_time = timestamp().unix_millis();
+        sleep_until(Timestamp::from_unix_millis(20000));
+        log::info!("OCW 1 is working at {}", current_time);
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
@@ -484,6 +491,8 @@ impl<T: Config> Pallet<T> {
     fn ocw_do_fetch_price_and_send_unsigned_for_all_accounts(
         block_number: BlockNumberFor<T>,
     ) -> Result<(), &'static str> {
+        let current_time = timestamp().unix_millis();
+        log::info!("OCW 2 is working at {}", current_time);
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
@@ -523,7 +532,6 @@ impl<T: Config> Pallet<T> {
     /// Fetch current price and return the result in cents.
     fn fetch_data(url : &str) -> Result<u32, http::Error> {
         let body = Self::response_from_http_url(url,5_000)?;
-        // log::info!("RESPONSE BODY RAW: {:#?}", body);
         let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
             log::warn!("No UTF8 body");
             http::Error::Unknown
@@ -534,11 +542,11 @@ impl<T: Config> Pallet<T> {
         let key = format!("ocw-pallet:catfact:{:?}:{:?}:{:?}", time_stamp, block_height,T::Hashing::hash(&body));
         log::info!("KEY ADDED: {}", key);
         let key_as_bytes = Self::to_bounded_vec::<_,256>(key.clone()).expect("Data");
-        log::info!("KEY INTO Bytes {:?}", &key_as_bytes);
+        log::info!("KEY INTO Bytes {:?}", key_as_bytes);
         if !HashStore::<T>::contains_key(&key_as_bytes) {
             log::debug!("Hash store has no key {:?}", key);
             Self::build_local_storage_for_http_response(StorageKind::PERSISTENT, key.as_bytes().clone(), &body);
-            HashStore::<T>::insert(&key_as_bytes, T::Hashing::hash(&body));
+            HashStore::<T>::insert(key_as_bytes, T::Hashing::hash(&body));
             log::info!("Succes storing data onchain and offchain.")
         }
         let price = match Self::parse_data(body_str) {
@@ -625,7 +633,7 @@ impl<T: Config> Pallet<T> {
             .build()
     }
     fn response_from_http_url(url: &str, time_to_live: u64) -> Result< Vec<u8>, http::Error> {
-        let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(time_to_live));
+        let deadline = timestamp().add(Duration::from_millis(time_to_live));
         let request =
             http::Request::get(url);
         let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
@@ -656,6 +664,7 @@ impl<T: Config> Pallet<T> {
             }
         }
     }
+
     fn to_bounded_vec<I, const N: u32>(input: I) -> Result<BoundedVec<u8, ConstU32<N>>, &'static str>
     where
         I: Into<Vec<u8>>,

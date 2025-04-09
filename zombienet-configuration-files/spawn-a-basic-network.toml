@@ -1,0 +1,33 @@
+[settings]
+timeout = 120
+
+[relaychain]
+chain = "rococo-local"
+
+[[relaychain.nodes]]
+name = "alice"
+validator = true
+
+[[relaychain.nodes]]
+name = "bob"
+validator = true
+
+[[parachains]]
+id = 1000
+addToGenesis = true
+cumulus_based = true
+chain = "dev"
+
+[[parachains.collators]]
+name = "collator01"
+command = "./target/release/parachain-template-node"
+ws_port = 9933
+rpc_port = 8833
+args = ["--offchain-worker always --rpc-max-connections 10000 --enable-offchain-indexing true --log offchain=trace,logger=trace"]
+
+[[parachains.collators]]
+name = "collator02"
+ws_port = 9822
+rpc_port = 8822
+command = "./target/release/parachain-template-node"
+args = ["--offchain-worker always --rpc-max-connections 10000 --enable-offchain-indexing true --log offchain=trace,logger=trace"]

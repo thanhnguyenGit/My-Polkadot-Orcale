@@ -8,6 +8,7 @@
       <sourceFolder url="file://$MODULE_DIR$/runtime/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/pallets/ocw-pallet/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/utils/offchain-utils/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/pallets/offchain-worker/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -10,7 +10,7 @@ function create_dev_chain_specs() {
     if command -v chain-spec-builder >/dev/null 2>&1; then
       echo "Generating chain specs for dev"
       chain-spec-builder create -t development \
-      --relay-chain paseo \
+      --relay-chain rococo \
       --para-id 1000 \
       --runtime ./target/release/wbuild/parachain-template-runtime/parachain_template_runtime.compact.compressed.wasm \
       named-preset development
@@ -24,7 +24,7 @@ function create_dev_chain_specs() {
 function run_omni_node() {
   if command -v polkadot-omni-node >/dev/null 2>&1; then
     echo "Running omni node with log"
-    polkadot-omni-node --chain ./chain_spec.json --dev --offchain-worker always --log offchain=trace,logger=trace
+    polkadot-omni-node --chain ./chain_spec.json --dev --prometheus-port 9615 --offchain-worker always --enable-offchain-indexing true --rpc-methods unsafe --log offchain=trace,logger=trace
     return $?
   else
     echo "Polkadot omni node crate is not installed"
