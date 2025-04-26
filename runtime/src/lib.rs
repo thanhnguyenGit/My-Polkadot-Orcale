@@ -315,6 +315,8 @@ mod runtime {
 	// pub type CustomPallet = custom_pallet;
 	#[runtime::pallet_index(53)]
 	pub type OcwPallet = ocw_pallet;
+	#[runtime::pallet_index(54)]
+	pub type WasmStorePallet = wasmstore_pallet;
 }
 
 #[docify::export(register_validate_block)]

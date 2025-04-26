@@ -7743,6 +7743,7 @@ dependencies = [
  "staging-xcm-builder",
  "staging-xcm-executor",
  "substrate-wasm-builder",
+ "wasmstore-pallet",
 ]
 
 [[package]]

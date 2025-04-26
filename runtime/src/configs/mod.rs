@@ -397,3 +397,13 @@ impl ocw_pallet::Config for Runtime {
 	type UnsignedPriority = UnsignedPriority;
 	type MaxPrices = MaxPrices;
 }
+
+parameter_types! {
+	pub const MaxScriptSize: u32 = 524_288;
+}
+
+impl wasmstore_pallet::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type WeightInfo = wasmstore_pallet::weights::SubstrateWeight<Runtime>;
+	type MaxScriptSize = MaxScriptSize;
+}

@@ -1,5 +1,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use codec::{Decode, Encode, MaxEncodedLen};
+use frame_support::{BoundedVec, CloneNoBound, DefaultNoBound, PartialEqNoBound};
+use frame_support::pallet_prelude::TypeInfo;
+use frame_system::pallet_prelude::BlockNumberFor;
 pub use pallet::*;
 #[cfg(test)]
 mod mock;
@@ -8,17 +12,20 @@ mod mock;
 mod tests;
 
 pub mod weights;
+use sp_std::vec::Vec;
+
 #[frame_support::pallet]
 pub mod pallet {
+	use super::*;
+	use codec::KeyedVec;
 	use frame_support::{dispatch::DispatchResultWithPostInfo, pallet_prelude::*, DefaultNoBound};
 	use frame_system::pallet_prelude::*;
 	use sp_io::offchain::timestamp;
 	use sp_runtime::traits::{CheckedAdd, One, Hash};
-
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: frame_system::Config  {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		type WeightInfo: crate::weights::WeightInfo;
 		#[pallet::constant]
@@ -35,7 +42,6 @@ pub mod pallet {
 		pub(crate) block_number: BlockNumberFor<T>,
 		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
 		pub(crate) hash: T::Hash,
-		pub(crate) last_update: u64,
 		pub(crate) typ : Type,
 		pub(crate) ref_count : u64,
 	}
@@ -63,7 +69,7 @@ pub mod pallet {
 		SizeTooBig,
 		HashCheckFail,
 		InvalidWasmFormat,
-		ValueAlreadyExist
+		NotOwner,
 	}
 
 	#[pallet::hooks]
@@ -74,19 +80,14 @@ pub mod pallet {
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		#[pallet::call_index(0)]
-		#[pallet::weight(10_000)]
+		#[pallet::weight(0)]
 		pub fn upload_wasm(origin: OriginFor<T>, wasm_code: Vec<u8>,typ: Type) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
 			ensure!(
-				<ScriptStorage<T>>::get(&who) != None,
-				Error::<T>::ValueAlreadyExist
-			);
-
-			ensure!(
-				wasm_code.len() <= T::MaxScriptSize::get() as usize,
+				wasm_code.len().le(&(T::MaxScriptSize::get() as usize)),
 				Error::<T>::SizeTooBig
-			);
+        	);
 
 			let code_hash = T::Hashing::hash(&wasm_code);
 
@@ -95,7 +96,6 @@ pub mod pallet {
 
 			let script_detail = ScriptDetail {
 				block_number: frame_system::Pallet::<T>::block_number(),
-				last_update: timestamp().unix_millis(),
 				typ,
 				ref_count : 0,
 				hash: code_hash,
@@ -114,3 +114,5 @@ pub mod pallet {
 		}
 	}
 }
+
+
