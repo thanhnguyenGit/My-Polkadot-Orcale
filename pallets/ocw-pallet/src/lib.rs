@@ -25,7 +25,7 @@ use alloc::string::{String,ToString};
 use sp_core::ConstU32;
 use sp_core::hexdisplay::AsBytesRef;
 use sp_core::offchain::{StorageKind, Timestamp};
-use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set, sleep_until};
+use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set,sleep_until};
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
 use sp_runtime::traits::{BlockNumberProvider, Hash};
 use sp_runtime::format;
@@ -160,6 +160,8 @@ pub mod pallet {
             let average: Option<u32> = Self::average_price();
             log::debug!("Current price: {:?}", average);
 
+            // OffchainWorkerExt::new(Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number)?);
+
             // For this example we are going to send both signed and unsigned transactions
             // depending on the block number.
             // Usually it's enough to choose one or the other.
@@ -173,15 +175,14 @@ pub mod pallet {
             //     TransactionType::Raw => Self::fetch_price_and_send_raw_unsigned(block_number),
             //     TransactionType::None => Ok(()),
             // };
-
             let res = Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number);
-            let res2 = Self::ocw_do_fetch_price_and_send_unsigned_for_all_accounts(block_number);
             if let Err(e) = res {
                 log::error!("Error OCW1: {}", e);
             }
-            if let Err(e) = res2 {
-                log::error!("Error OCW2: {}", e);
-            }
+            // // let res2 = Self::ocw_do_fetch_price_and_send_unsigned_for_all_accounts(block_number);
+            // if let Err(e) = res2 {
+            //     log::error!("Error OCW2: {}", e);
+            // }
         }
     }
 
@@ -421,11 +422,12 @@ impl<T: Config> Pallet<T> {
 
     /// A helper function to fetch the price and send a raw unsigned transaction.
     fn ocw_do_fetch_price_and_send_raw_unsigned(block_number: BlockNumberFor<T>) -> Result<(), &'static str> {
-        let current_time = timestamp().unix_millis();
-        sleep_until(Timestamp::from_unix_millis(20000));
-        log::info!("OCW 1 is working at {}", current_time);
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
+        // let current_time = timestamp().unix_millis();
+        // log::info!("OCW 1 IS ABOUT TO SLEEP AT {}", current_time);
+        // sleep_until(Timestamp::from_unix_millis(current_time + 20000));
+        // log::info!("OCW 1 WAKE UP AND START WORKING AT {}", current_time);
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
         if next_unsigned_at > block_number {
             log::info!("Next unsigned at block: {:#?}, current block at: {:#?} ", next_unsigned_at,block_number);
@@ -492,7 +494,7 @@ impl<T: Config> Pallet<T> {
         block_number: BlockNumberFor<T>,
     ) -> Result<(), &'static str> {
         let current_time = timestamp().unix_millis();
-        log::info!("OCW 2 is working at {}", current_time);
+        log::info!("OCW 2 IS WORKING AT {}", current_time);
         // Make sure we don't fetch the price if unsigned transaction is going to be rejected
         // anyway.
         let next_unsigned_at = <NextUnsignedAt<T>>::get();
@@ -634,8 +636,7 @@ impl<T: Config> Pallet<T> {
     }
     fn response_from_http_url(url: &str, time_to_live: u64) -> Result< Vec<u8>, http::Error> {
         let deadline = timestamp().add(Duration::from_millis(time_to_live));
-        let request =
-            http::Request::get(url);
+        let request = http::Request::get(url);
         let pending = request.deadline(deadline).send().map_err(|_| http::Error::IoError)?;
         let response = pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
         if response.code != 200 {

@@ -6,6 +6,17 @@ cd "$(dirname "$0")/.." || {
     exit 1
 }
 
+function run_build_release() {
+    if command -v cargo build > /dev/null 2>&1; then
+      echo "Buiding binary"
+      cargo build --release
+      return $?
+    else
+      echo "Cargo is not install, make sure to install lastest cargo"
+      return 1
+    fi
+}
+
 function create_dev_chain_specs() {
     if command -v chain-spec-builder >/dev/null 2>&1; then
       echo "Generating chain specs for dev"
@@ -24,7 +35,7 @@ function create_dev_chain_specs() {
 function run_omni_node() {
   if command -v polkadot-omni-node >/dev/null 2>&1; then
     echo "Running omni node with log"
-    polkadot-omni-node --chain ./chain_spec.json --dev --prometheus-port 9615 --offchain-worker always --enable-offchain-indexing true --rpc-methods unsafe --log offchain=trace,logger=trace
+    polkadot-omni-node --chain ./chain_spec.json --collator --dev --prometheus-port 9615 --offchain-worker always --enable-offchain-indexing true --rpc-methods unsafe --log offchain=trace,logger=trace
     return $?
   else
     echo "Polkadot omni node crate is not installed"
@@ -32,7 +43,7 @@ function run_omni_node() {
   fi
 }
 echo "$HEADLINE"
-create_dev_chain_specs && run_omni_node
+run_build_release && create_dev_chain_specs && run_omni_node
 echo "Finish running"
 
 

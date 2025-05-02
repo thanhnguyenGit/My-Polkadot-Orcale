@@ -4,16 +4,17 @@ use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::{BoundedVec, CloneNoBound, DefaultNoBound, PartialEqNoBound};
 use frame_support::pallet_prelude::TypeInfo;
 use frame_system::pallet_prelude::BlockNumberFor;
+use sp_core::offchain::{StorageKind, Timestamp};
+use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set,sleep_until};
+use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
+use sp_io::hashing::blake2_256;
+
+use frame_system;
+use sp_runtime::traits::Lazy;
 pub use pallet::*;
-#[cfg(test)]
-mod mock;
-
-#[cfg(test)]
-mod tests;
-
 pub mod weights;
 use sp_std::vec::Vec;
-
+use sp_std::{vec,map};
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -22,6 +23,7 @@ pub mod pallet {
 	use frame_system::pallet_prelude::*;
 	use sp_io::offchain::timestamp;
 	use sp_runtime::traits::{CheckedAdd, One, Hash};
+
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
 	#[pallet::config]
@@ -74,7 +76,12 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-
+		fn offchain_worker(block_number: BlockNumberFor<T>) {
+			log::info!("Hello from offchain workers of WASMSTORE!");
+			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
+			let _ = Self::simulate_heavy_computation(&block_number);
+			log::info!("WASMSTORE! Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+		}
 	}
 
 	#[pallet::call]
@@ -115,4 +122,50 @@ pub mod pallet {
 	}
 }
 
+struct OCWstate {
+	id: u32,
+	is_active : bool
+}
+
+#[derive(Default)]
+struct OCWManager {
+	storage: HashMap<u64, OCWstate>
+}
+
+// impl OCWManager {
+// 	fn add_ocw(&mut self, block_number : u64, )
+// }
+
+static OCW_MANAGER: Mutex<OCWManager> = Mutex::new(OCWManager::default());
+
+
+
+impl<T: Config> Pallet<T> {
+	fn simulate_heavy_computation(block_number: &BlockNumberFor<T>) -> Result<(), &'static str> {
+		let parent_hash = <frame_system::Pallet<T>>::block_hash(*block_number - 1u32.into());
+		log::info!("WASMSTORE! OCW current run at Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+
+		let mut data = vec![0u8; 1024];
+		let iterations = 50_000_000;
+
+		log::info!("Starting heavy OCW task...");
+
+		for i in 0..iterations {
+			data[0] = (i % 256) as u8;
+
+			let _ = blake2_256(&data);
+			if i % 100_000 == 0 {
+			}
+		}
+
+		log::info!("Finished heavy OCW task after {} iterations", iterations);
+		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
 

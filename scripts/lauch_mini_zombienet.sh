@@ -6,6 +6,17 @@ cd "$(dirname "$0")/.." || {
     exit 1
 }
 
+function run_build_release() {
+    if command -v cargo build > /dev/null 2>&1; then
+      echo "Buiding binary"
+      cargo build --release
+      return $?
+    else
+      echo "Cargo is not install, make sure to install lastest cargo"
+      return 1
+    fi
+}
+
 function create_dev_chain_specs() {
     if command -v chain-spec-builder >/dev/null 2>&1; then
       echo "Generating chain specs for dev"
@@ -32,7 +43,7 @@ function run_zombienet() {
   fi
 }
 echo "$HEADLINE"
-create_dev_chain_specs && run_zombienet
+run_build_release && create_dev_chain_specs && run_zombienet
 echo "Finish running"
 
 
