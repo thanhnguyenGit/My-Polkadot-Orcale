@@ -10,7 +10,6 @@ use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
 use sp_io::hashing::blake2_256;
 
 use frame_system;
-use sp_runtime::traits::Lazy;
 pub use pallet::*;
 pub mod weights;
 use sp_std::vec::Vec;
@@ -48,6 +47,16 @@ pub mod pallet {
 		pub(crate) ref_count : u64,
 	}
 
+	#[derive(
+		Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, DefaultNoBound,
+	)]
+	#[scale_info(skip_type_params(T))]
+	pub struct OCWJobManager<T: Config> {
+		block_number: BlockNumberFor<T>,
+		is_status: bool,
+
+	}
+
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
@@ -77,10 +86,7 @@ pub mod pallet {
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn offchain_worker(block_number: BlockNumberFor<T>) {
-			log::info!("Hello from offchain workers of WASMSTORE!");
-			let parent_hash = <frame_system::Pallet<T>>::block_hash(block_number - 1u32.into());
 			let _ = Self::simulate_heavy_computation(&block_number);
-			log::info!("WASMSTORE! Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
 		}
 	}
 
@@ -122,43 +128,62 @@ pub mod pallet {
 	}
 }
 
-struct OCWstate {
-	id: u32,
-	is_active : bool
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
+struct OCWState<T : Config > {
+	is_active: bool,
+	start_at_block: BlockNumberFor<T>,
+	parent_hash: T::Hash,
+	start_at_time: u64,
 }
 
-#[derive(Default)]
-struct OCWManager {
-	storage: HashMap<u64, OCWstate>
+impl<T : Config> From<OCWState<T>> for Vec<u8> {
+	fn from(state: OCWState<T>) -> Self {
+		state.encode()
+	}
 }
-
-// impl OCWManager {
-// 	fn add_ocw(&mut self, block_number : u64, )
-// }
-
-static OCW_MANAGER: Mutex<OCWManager> = Mutex::new(OCWManager::default());
-
 
 
 impl<T: Config> Pallet<T> {
 	fn simulate_heavy_computation(block_number: &BlockNumberFor<T>) -> Result<(), &'static str> {
+		let local_lock = b"do_heavy_computation_lock";
+		let current_time = timestamp().unix_millis();
 		let parent_hash = <frame_system::Pallet<T>>::block_hash(*block_number - 1u32.into());
-		log::info!("WASMSTORE! OCW current run at Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+		let value : OCWState<T> = OCWState {
+			is_active: true,
+			start_at_block: block_number.clone(),
+			parent_hash,
+			start_at_time: current_time,
+		};
+		let debug_value = value.clone();
+		let payload : Vec<u8> = value.into();
+		match local_storage_get(StorageKind::PERSISTENT, local_lock) {
+			None => {
+				local_storage_set(StorageKind::PERSISTENT, local_lock, &payload);
+			}
+			Some(_) => {
+				log::error!("WASMSTORE! Cannot instantiate new OCW");
+				return Err("WASMSTORE! OCW is still running")
+			}
+		}
+
+		log::info!("WASMSTORE! OCW is running at block: {:?} (parent hash: {:#?}) \n start at: {:#?} \n STATUS: {:#?}", debug_value.start_at_block, debug_value.parent_hash,debug_value.start_at_time,debug_value.start_at_time);
 
 		let mut data = vec![0u8; 1024];
-		let iterations = 50_000_000;
+		let iterations = 20_000_000;
 
 		log::info!("Starting heavy OCW task...");
-
+		let mut value = 0;
 		for i in 0..iterations {
 			data[0] = (i % 256) as u8;
 
 			let _ = blake2_256(&data);
 			if i % 100_000 == 0 {
+				value += i;
 			}
 		}
 
 		log::info!("Finished heavy OCW task after {} iterations", iterations);
+		local_storage_clear(StorageKind::PERSISTENT, local_lock);
 		Ok(())
 	}
 }
