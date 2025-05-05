@@ -34,7 +34,8 @@ function create_dev_chain_specs() {
 
 function run_omni_node() {
   if command -v polkadot-omni-node >/dev/null 2>&1; then
-    echo "Running omni node with log"
+    echo "Running omni node"
+    echo "WARNING: this network enable: Log, OCW, unsafe rpc-methods"
     polkadot-omni-node --chain ./chain_spec.json --collator --dev --prometheus-port 9615 --offchain-worker always --enable-offchain-indexing true --rpc-methods unsafe --log offchain=trace,logger=trace
     return $?
   else

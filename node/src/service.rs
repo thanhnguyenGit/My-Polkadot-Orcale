@@ -2,7 +2,7 @@
 
 // std
 use std::{sync::Arc, time::Duration};
-
+use std::process::{Command, Stdio};
 use cumulus_client_cli::CollatorOptions;
 // Local Runtime Types
 use parachain_template_runtime::{
@@ -31,8 +31,10 @@ use cumulus_relay_chain_interface::{OverseerHandle, RelayChainInterface};
 // Substrate Imports
 use frame_benchmarking_cli::SUBSTRATE_REFERENCE_HARDWARE;
 use futures::FutureExt;
+use polkadot_cli::service::FullClient;
 use polkadot_primitives::ASSIGNMENT_KEY_TYPE_ID;
 use prometheus_endpoint::Registry;
+use sc_cli::print_node_infos;
 use sc_client_api::Backend;
 use sc_consensus::ImportQueue;
 use sc_executor::{HeapAllocStrategy, WasmExecutor, DEFAULT_HEAP_ALLOC_STRATEGY};
@@ -40,7 +42,12 @@ use sc_network::NetworkBlock;
 use sc_service::{Configuration, PartialComponents, TFullBackend, TFullClient, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryHandle, TelemetryWorker, TelemetryWorkerHandle};
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
+use sp_core::offchain::OffchainStorage;
+use sp_io::misc::print_num;
 use sp_keystore::KeystorePtr;
+use sp_runtime::print;
+
+const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 
 #[docify::export(wasm_executor)]
 type ParachainExecutor = WasmExecutor<ParachainHostFunctions>;
@@ -234,6 +241,46 @@ fn start_consensus(
 	Ok(())
 }
 
+const binary_url : &str = "/home/nguyen-viet-thanh/RustProjects/wasmruntime_test/target/release/runtime";
+
+/// Test: Run script executor binary
+fn run_executor() {
+	let res =  Command::new(binary_url)
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.output();
+	match res {
+		Ok(_) => {println!("The binary is running")}
+		Err(_) => {println!("Fail to run binary")}
+	}
+}
+
+async fn wasmstore_eventloop(backend: Arc<ParachainBackend>) {
+	
+}
+
+async fn read_from_offchain_db(backend: Arc<ParachainBackend>,key: &[u8]) -> Option<Vec<u8>>{
+	let offchain_db = backend.offchain_storage().expect("Offchain storage exist");
+	
+	if let Some(val) = offchain_db.get(OCW_STORAGE_PREFIX,key) {
+		log::info!("VAL IS: {:?}", val);
+		Some(val)
+	} else {
+		log::error!("Value is empty at key: {:?}", key);
+		None
+	}
+}
+
+async fn write_to_offchain_db(backend: Arc<ParachainBackend>,key: &[u8],value: &[u8]) {
+	let offchain_db = backend.offchain_storage().expect("Offchain storage exist");
+
+	if let Some(val) = offchain_db.get(OCW_STORAGE_PREFIX,key) {
+		log::info!("VAL IS: {:?}", val)
+	} else {
+		log::info!("Value is empty at key: {:?}", key);
+	}
+}
+
 /// Start a node with the given parachain `Configuration` and relay chain `Configuration`.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
 pub async fn start_parachain_node(
@@ -276,7 +323,11 @@ pub async fn start_parachain_node(
 
 	// NOTE: because we use Aura here explicitly, we can use `CollatorSybilResistance::Resistant`
 	// when starting the network.
-	let (network, system_rpc_tx, tx_handler_controller, start_network, sync_service) =
+	let (network,
+		system_rpc_tx,
+		tx_handler_controller,
+		start_network,
+		sync_service) =
 		build_network(BuildNetworkParams {
 			parachain_config: &parachain_config,
 			net_config,
@@ -411,7 +462,11 @@ pub async fn start_parachain_node(
 			announce_block,
 		)?;
 	}
-
+	run_executor();
+	// write_to_offchain_db(params.backend.clone());
+	task_manager.spawn_handle().spawn("ReadData", "OffChainService", async move {
+		read_from_offchain_db(params.backend.clone(), &[]).await;
+	})
 	start_network.start_network();
 
 	Ok((task_manager, client))

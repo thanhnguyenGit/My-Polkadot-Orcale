@@ -142,10 +142,9 @@ impl<T : Config> From<OCWState<T>> for Vec<u8> {
 	}
 }
 
-
 impl<T: Config> Pallet<T> {
 	fn simulate_heavy_computation(block_number: &BlockNumberFor<T>) -> Result<(), &'static str> {
-		let local_lock = b"do_heavy_computation_lock";
+		let local_lock = b"wasmstore::ocw::do_heavy_computation_lock";
 		let current_time = timestamp().unix_millis();
 		let parent_hash = <frame_system::Pallet<T>>::block_hash(*block_number - 1u32.into());
 		let value : OCWState<T> = OCWState {
@@ -154,6 +153,7 @@ impl<T: Config> Pallet<T> {
 			parent_hash,
 			start_at_time: current_time,
 		};
+
 		let debug_value = value.clone();
 		let payload : Vec<u8> = value.into();
 		match local_storage_get(StorageKind::PERSISTENT, local_lock) {
@@ -166,7 +166,7 @@ impl<T: Config> Pallet<T> {
 			}
 		}
 
-		log::info!("WASMSTORE! OCW is running at block: {:?} (parent hash: {:#?}) \n start at: {:#?} \n STATUS: {:#?}", debug_value.start_at_block, debug_value.parent_hash,debug_value.start_at_time,debug_value.start_at_time);
+		log::info!("WASMSTORE! OCW is running at block: {:?} (parent hash: {:#?}), start at: {:#?},  STATUS: {:#?}", debug_value.start_at_block, debug_value.parent_hash,debug_value.start_at_time,debug_value.is_active);
 
 		let mut data = vec![0u8; 1024];
 		let iterations = 20_000_000;
@@ -182,7 +182,7 @@ impl<T: Config> Pallet<T> {
 			}
 		}
 
-		log::info!("Finished heavy OCW task after {} iterations", iterations);
+		log::info!("Finished heavy OCW task after {} iterations, result: {}, clearing storage for furure instances", iterations,value);
 		local_storage_clear(StorageKind::PERSISTENT, local_lock);
 		Ok(())
 	}

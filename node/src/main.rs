@@ -2,6 +2,8 @@
 
 #![warn(missing_docs)]
 
+use std::process::{Command, Stdio};
+
 mod chain_spec;
 mod cli;
 mod command;
