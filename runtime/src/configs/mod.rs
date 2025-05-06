@@ -400,10 +400,12 @@ impl ocw_pallet::Config for Runtime {
 
 parameter_types! {
 	pub const MaxScriptSize: u32 = 524_288;
+	pub const MaxStringSize: u32 = 256;
 }
 
 impl wasmstore_pallet::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type WeightInfo = wasmstore_pallet::weights::SubstrateWeight<Runtime>;
 	type MaxScriptSize = MaxScriptSize;
+	type MaxStringSize = MaxStringSize;
 }

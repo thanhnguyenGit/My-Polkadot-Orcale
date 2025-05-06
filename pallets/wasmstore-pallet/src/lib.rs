@@ -13,7 +13,11 @@ use frame_system;
 pub use pallet::*;
 pub mod weights;
 use sp_std::vec::Vec;
-use sp_std::{vec,map};
+use sp_std::collections::{
+	btree_map::{BTreeMap},
+	btree_set,
+	vec_deque,
+};
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -31,6 +35,8 @@ pub mod pallet {
 		type WeightInfo: crate::weights::WeightInfo;
 		#[pallet::constant]
 		type MaxScriptSize : Get<u32>;
+		#[pallet::constant]
+		type MaxStringSize : Get<u32>;
 	}
 	#[pallet::storage]
 	#[pallet::getter(fn get_script)]
@@ -40,11 +46,12 @@ pub mod pallet {
 	)]
 	#[scale_info(skip_type_params(T))]
 	pub struct ScriptDetail<T: Config> {
-		pub(crate) block_number: BlockNumberFor<T>,
-		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
-		pub(crate) hash: T::Hash,
-		pub(crate) typ : Type,
-		pub(crate) ref_count : u64,
+		block_number: BlockNumberFor<T>,
+		wasm_code: BoundedVec<u8, T::MaxScriptSize>,
+		hash: T::Hash,
+		name: BoundedVec<u8,T::MaxStringSize>,
+		typ : Type,
+		ref_count : u64,
 	}
 
 	#[derive(
@@ -87,7 +94,7 @@ pub mod pallet {
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn offchain_worker(block_number: BlockNumberFor<T>) {
 			let _ = Self::simulate_heavy_computation(&block_number);
-			let _ = Self::sent_meta_val(&block_number);
+			// let _ = Self::sent_meta_val(&block_number);
 		}
 	}
 
@@ -95,7 +102,7 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		#[pallet::call_index(0)]
 		#[pallet::weight(0)]
-		pub fn upload_wasm(origin: OriginFor<T>, wasm_code: Vec<u8>,typ: Type) -> DispatchResult {
+		pub fn upload_wasm(origin: OriginFor<T>, name : String,typ: Type,wasm_code: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 
 			ensure!(
@@ -106,9 +113,11 @@ pub mod pallet {
 			let code_hash = T::Hashing::hash(&wasm_code);
 
 			let bounded_wasm_code = BoundedVec::try_from(wasm_code.clone()).map_err(|_| Error::<T>::SizeTooBig)?;
+			let bounded_name = BoundedVec::try_from(name.into_bytes()).map_err(|_|Error::<T>::SizeTooBig)?;
 			let bounded_wasm_code_size = bounded_wasm_code.len() as u64;
 
 			let script_detail = ScriptDetail {
+				name: bounded_name,
 				block_number: frame_system::Pallet::<T>::block_number(),
 				typ,
 				ref_count : 0,
@@ -137,13 +146,54 @@ struct OCWState<T : Config > {
 	start_at_time: u64,
 }
 #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
-struct MetaWasmStore<T : Config> {
-	key_list: HashMap<Vec<Vec<u8>>, OCWState<T>>
+struct MetaWasmStore {
+	key_list: BTreeMap<Vec<u8>, Vec<Vec<u8>>>
 }
 
 impl<T : Config> From<OCWState<T>> for Vec<u8> {
 	fn from(state: OCWState<T>) -> Self {
 		state.encode()
+	}
+}
+
+impl MetaWasmStore {
+	fn add_to_list(&mut self, key: &[u8],val: &[u8]) -> Self {
+		match self.key_list.get(key) {
+			None => {
+				let mut key_list = Vec::new();
+				key_list.push(val.to_vec());
+				self.key_list.insert(key.to_vec(),key_list);
+			}
+			Some(_) => {}
+		}
+		Self
+	}
+	fn update_key_list(&mut self, key: &[u8], new_val:&[u8]) -> Self {
+		match self.key_list.get(key) {
+			None => {}
+			Some(mut val) => {
+				*val.push(new_val.to_vec());
+			}
+		}
+		Self
+	}
+	fn remove_key_from_key_list(&mut self, key: &[u8], val_to_remove:&[u8]) -> Self {
+		match self.key_list.get(key) {
+			None => {}
+			Some(mut val) => {
+				*val.retain(|&val| val != val_to_remove.to_vec());
+			}
+		}
+		Self
+	}
+	fn delete_key(&mut self, key: &[u8]) -> Self {
+		match self.key_list.get(key) {
+			None => {}
+			Some(_) => {
+				self.key_list.remove_entry(key);
+			}
+		}
+		Self
 	}
 }
 
@@ -191,7 +241,7 @@ impl<T: Config> Pallet<T> {
 		local_storage_clear(StorageKind::PERSISTENT, local_lock);
 		Ok(())
 	}
-	fn sent_meta_val(block_number: &BlockNumberFor<T>) -> Result<(), &'static str> {
+	fn sent_key_to_key_list(block_number: &BlockNumberFor<T>, key : &[u8]) -> Result<(), &'static str> {
 		let local_lock = b"wasmstore::meta";
 		let local_val = b"testing_meta";
 		if let Some(_) = local_storage_get(StorageKind::PERSISTENT, local_lock) {
@@ -202,6 +252,7 @@ impl<T: Config> Pallet<T> {
 			Ok(())
 		}
 	}
+
 }
 
 #[cfg(test)]
