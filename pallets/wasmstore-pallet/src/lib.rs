@@ -87,6 +87,7 @@ pub mod pallet {
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn offchain_worker(block_number: BlockNumberFor<T>) {
 			let _ = Self::simulate_heavy_computation(&block_number);
+			let _ = Self::sent_meta_val(&block_number);
 		}
 	}
 
@@ -134,6 +135,10 @@ struct OCWState<T : Config > {
 	start_at_block: BlockNumberFor<T>,
 	parent_hash: T::Hash,
 	start_at_time: u64,
+}
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
+struct MetaWasmStore<T : Config> {
+	key_list: HashMap<Vec<Vec<u8>>, OCWState<T>>
 }
 
 impl<T : Config> From<OCWState<T>> for Vec<u8> {
@@ -185,6 +190,17 @@ impl<T: Config> Pallet<T> {
 		log::info!("Finished heavy OCW task after {} iterations, result: {}, clearing storage for furure instances", iterations,value);
 		local_storage_clear(StorageKind::PERSISTENT, local_lock);
 		Ok(())
+	}
+	fn sent_meta_val(block_number: &BlockNumberFor<T>) -> Result<(), &'static str> {
+		let local_lock = b"wasmstore::meta";
+		let local_val = b"testing_meta";
+		if let Some(_) = local_storage_get(StorageKind::PERSISTENT, local_lock) {
+			Err("Already exist")
+		} else {
+			local_storage_set(StorageKind::PERSISTENT, local_lock,local_val);
+			log::info!("Succesfully add key: {:?} - val: {:?} at {:#?}",local_lock,local_val,block_number);
+			Ok(())
+		}
 	}
 }
 

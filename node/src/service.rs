@@ -47,7 +47,8 @@ use sp_io::misc::print_num;
 use sp_keystore::KeystorePtr;
 use sp_runtime::print;
 
-const OCW_STORAGE_PREFIX: &[u8] = b"storage";
+//local project import
+use super::scripts_exec_manager::offchain_storage_monitoring;
 
 #[docify::export(wasm_executor)]
 type ParachainExecutor = WasmExecutor<ParachainHostFunctions>;
@@ -240,10 +241,10 @@ fn start_consensus(
 
 	Ok(())
 }
-
+/// TESTING FEATURE
+/// -------------------------------------------------------------------------------------------------------
+// run external binary
 const binary_url : &str = "/home/nguyen-viet-thanh/RustProjects/wasmruntime_test/target/release/runtime";
-
-/// Test: Run script executor binary
 fn run_executor() {
 	let res =  Command::new(binary_url)
 		.stdout(Stdio::piped())
@@ -254,32 +255,7 @@ fn run_executor() {
 		Err(_) => {println!("Fail to run binary")}
 	}
 }
-
-async fn wasmstore_eventloop(backend: Arc<ParachainBackend>) {
-	
-}
-
-async fn read_from_offchain_db(backend: Arc<ParachainBackend>,key: &[u8]) -> Option<Vec<u8>>{
-	let offchain_db = backend.offchain_storage().expect("Offchain storage exist");
-	
-	if let Some(val) = offchain_db.get(OCW_STORAGE_PREFIX,key) {
-		log::info!("VAL IS: {:?}", val);
-		Some(val)
-	} else {
-		log::error!("Value is empty at key: {:?}", key);
-		None
-	}
-}
-
-async fn write_to_offchain_db(backend: Arc<ParachainBackend>,key: &[u8],value: &[u8]) {
-	let offchain_db = backend.offchain_storage().expect("Offchain storage exist");
-
-	if let Some(val) = offchain_db.get(OCW_STORAGE_PREFIX,key) {
-		log::info!("VAL IS: {:?}", val)
-	} else {
-		log::info!("Value is empty at key: {:?}", key);
-	}
-}
+/// -------------------------------------------------------------------------------------------------------
 
 /// Start a node with the given parachain `Configuration` and relay chain `Configuration`.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
@@ -463,10 +439,7 @@ pub async fn start_parachain_node(
 		)?;
 	}
 	run_executor();
-	// write_to_offchain_db(params.backend.clone());
-	task_manager.spawn_handle().spawn("ReadData", "OffChainService", async move {
-		read_from_offchain_db(params.backend.clone(), &[]).await;
-	})
+	task_manager.spawn_handle().spawn("OffChainMonitor", "OffChainService", offchain_storage_monitoring(params.backend.clone()).boxed());
 	start_network.start_network();
 
 	Ok((task_manager, client))

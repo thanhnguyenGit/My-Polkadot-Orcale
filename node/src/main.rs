@@ -9,6 +9,7 @@ mod cli;
 mod command;
 mod rpc;
 mod service;
+mod scripts_exec_manager;
 
 fn main() -> sc_cli::Result<()> {
 	command::run()
