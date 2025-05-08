@@ -398,14 +398,21 @@ impl ocw_pallet::Config for Runtime {
 	type MaxPrices = MaxPrices;
 }
 
+
 parameter_types! {
 	pub const MaxScriptSize: u32 = 524_288;
 	pub const MaxStringSize: u32 = 256;
+	pub const MaxScriptStorageCap: u32 = 500;
+	pub const MaxScriptKeyLen : u32 = 256;
+	pub const MaxJobs : u32 = 25;
 }
 
 impl wasmstore_pallet::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type WeightInfo = wasmstore_pallet::weights::SubstrateWeight<Runtime>;
 	type MaxScriptSize = MaxScriptSize;
+	type MaxScriptStorageCap = MaxScriptStorageCap;
+	type MaxScriptKeyLen = MaxScriptKeyLen;
 	type MaxStringSize = MaxStringSize;
+	type MaxJobs = MaxJobs;
 }

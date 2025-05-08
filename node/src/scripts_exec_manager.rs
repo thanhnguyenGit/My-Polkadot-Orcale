@@ -7,16 +7,17 @@ use jsonrpsee::tokio::time::{sleep_until, Instant};
 // Substrate Imports
 use sc_client_api::Backend;
 use sc_service::{Configuration, PartialComponents, TFullBackend, TFullClient, TaskManager};
-use sp_core::offchain::OffchainStorage;
+use sp_core::offchain::{OffchainStorage, StorageKind};
+use sp_io::offchain::local_storage_set;
 use parachain_template_runtime::{
     apis::RuntimeApi,
     opaque::{Block, Hash},
 };
-
+use substrate_api_client::api::api_client::Api;
 
 
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
-const WASMSTORE_META_KEY: &[u8] = b"wasmstore::meta";
+const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore::keylist";
 enum StorageError {
     FailToWrite,
 }
@@ -27,12 +28,13 @@ struct Meta {
 }
 
 pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
-    let offchain_db = backend.offchain_storage().expect("No storage found");
+    let mut offchain_db = backend.offchain_storage().expect("No storage found");
+    offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
     loop {
-        if let Some(meta_val) = offchain_db.get(OCW_STORAGE_PREFIX,WASMSTORE_META_KEY) {
+        if let Some(meta_val) = offchain_db.get(OCW_STORAGE_PREFIX,WASMSTORE_KEY_LIST) {
             println!("Receive key {:?}", meta_val);
         }
-        sleep_until(Instant::now() + Duration::from_millis(5000)).await;
+        sleep_until(Instant::now() + Duration::from_millis(200)).await;
     }
 }
 
