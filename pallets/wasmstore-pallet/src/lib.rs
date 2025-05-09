@@ -11,7 +11,13 @@ use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_s
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
 use sp_io::hashing::blake2_256;
 
-use frame_system;
+use frame_system::{
+	self as system,
+	offchain::{
+		AppCrypto, CreateSignedTransaction, SendSignedTransaction, SendUnsignedTransaction,
+		SignedPayload, Signer, SigningTypes, SubmitTransaction, SendTransactionTypes
+	},
+};
 pub use pallet::*;
 pub mod weights;
 use sp_std::vec::Vec;
@@ -39,7 +45,7 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
-	pub trait Config: frame_system::Config  {
+	pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>>  {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		type WeightInfo: crate::weights::WeightInfo;
 		#[pallet::constant]
@@ -60,12 +66,12 @@ pub mod pallet {
 	pub type ScriptStorage<T : Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8,T::MaxScriptKeyLen>,ScriptDetail<T>, OptionQuery>;
 
 	#[pallet::storage]
-	#[pallet::getter(fn get_script_key_list)]
-	pub type ScriptKeyList<T : Config> = StorageValue<_,BoundedVec<BoundedVec<u8,T::MaxScriptKeyLen>,T::MaxScriptStorageCap>, ValueQuery>;
+	#[pallet::getter(fn get_script_result)]
+	pub type ScriptResult<T : Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8,T::MaxScriptKeyLen>,BoundedVec<u8,T::MaxScriptKeyLen>, ValueQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_jobs)]
-	pub type JobManager<T : Config> = StorageMap<_, Blake2_128Concat, T::AccountId,BoundedVec<OCWJob<T>,T::MaxJobs>, OptionQuery>;
+	pub type JobQueue<T : Config> = StorageValue<_,BoundedVec<OCWJob<T>,T::MaxJobs>, ValueQuery>;
 	#[derive(
 		Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound,Default
 	)]
@@ -78,22 +84,23 @@ pub mod pallet {
 		name: BoundedVec<u8,T::MaxStringSize>,
 		typ : Type,
 		ref_count : u64,
-		result: BoundedVec<u8,T::MaxStringSize>,
 	}
 
 	#[derive(
-		Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, DefaultNoBound,
+		Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, Default
 	)]
 	#[scale_info(skip_type_params(T))]
 	pub struct OCWJob<T: Config> {
-		script_name : BoundedVec<u8,T::MaxStringSize>,
-		state: JobState,
+		pub(crate) caller : T::AccountId,
+		pub(crate) script_name : BoundedVec<u8,T::MaxStringSize>,
+		pub(crate) state: JobState,
 	}
 
 	#[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
-	enum JobState {
+	pub enum JobState {
 		#[default]
-		Idle,
+		Idling,
+		Pending,
 		Processing,
 	}
 
@@ -104,13 +111,17 @@ pub mod pallet {
 			who: T::AccountId,
 			block_number: BlockNumberFor<T>,
 			size : u64,
+			script_name : String,
 			hash_id : T::Hash,
 		},
 		RequestExecution {
 			who: T::AccountId,
 			block_number: BlockNumberFor<T>,
 			script_name: String
-		}
+		},
+		UnsignedTx {
+			when: BlockNumberFor<T>
+		},
 	}
 
 	#[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
@@ -127,7 +138,7 @@ pub mod pallet {
 		InvalidWasmFormat,
 		NotOwner,
 		ValAlreadyExist,
-		ValNoneExist,
+		NoValExist,
 		MaxCapReach,
 
 	}
@@ -137,6 +148,7 @@ pub mod pallet {
 		fn offchain_worker(block_number: BlockNumberFor<T>) {
 			// let _ = Self::simulate_heavy_computation(&block_number);
 			// let _ = Self::sent_meta_val(&block_number);
+			let _ = Self::ocw_do_handling_job(block_number);
 		}
 	}
 
@@ -146,10 +158,10 @@ pub mod pallet {
 		#[pallet::weight(0)]
 		pub fn upload_wasm(origin: OriginFor<T>, mut name : String, typ: Type, wasm_code: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
-			match typ {
-				Type::Executable => {name = format!("EXE{:?}", name)}
-				Type::Source => {name = format!("SRC{:?}", name)}
-			}
+			name = match typ {
+				Type::Executable => format!("EXE{}", name.as_str()),
+				Type::Source => format!("SRC{}", name.as_str())
+			};
 			let name_clone = name.clone();
 			let code_hash = T::Hashing::hash(&wasm_code);
 
@@ -163,7 +175,7 @@ pub mod pallet {
 			let bounded_wasm_code_size = bounded_wasm_code.len() as u64;
 
 			let script_key = {
-				let key = format!("{:?}",name_clone).encode();
+				let key = format!("{:?}",name_clone.as_str()).encode();
 				BoundedVec::try_from(key).map_err(|_|Error::<T>::SizeTooBig)?
 			};
 			let val = ScriptStorage::<T>::get(&script_key);
@@ -171,7 +183,7 @@ pub mod pallet {
 				None => {}
 				Some(script_detail) => {
 					ensure!(
-						bounded_name.eq(&script_detail.name) || bounded_wasm_code.eq(&script_detail.wasm_code)
+						bounded_name.ne(&script_detail.name) || bounded_wasm_code.ne(&script_detail.wasm_code)
 						,Error::<T>::ValAlreadyExist
 					)
 				}
@@ -185,16 +197,15 @@ pub mod pallet {
 				ref_count : 0,
 				hash: code_hash,
 				wasm_code: bounded_wasm_code,
-				result: BoundedVec::new(),
 			};
 
 			<ScriptStorage<T>>::insert(&script_key, script_detail);
-			// Self::add_key_to_keylist(script_key).expect("TODO: panic message");
 
 			Self::deposit_event(Event::<T>::ScriptUpload {
 				block_number: frame_system::Pallet::<T>::block_number(),
 				size: bounded_wasm_code_size,
 				who,
+				script_name: name_clone,
 				hash_id: code_hash,
 			});
 			Ok(())
@@ -204,32 +215,31 @@ pub mod pallet {
 		pub fn request_script_execution(origin: OriginFor<T>, script_name : String) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			let script_key = {
-				let key = format!("{:?}",script_name).encode();
+				let key = format!("{:?}",script_name.as_str()).encode();
 				BoundedVec::try_from(key).map_err(|_|Error::<T>::SizeTooBig)?
 			};
 			let val = <ScriptStorage<T>>::get(&script_key);
 			match val {
 				None => {
-					return Err(Error::<T>::ValNoneExist.into());
+					return Err(Error::<T>::NoValExist.into());
 				}
 				Some(_) => {
 					let name = BoundedVec::try_from(script_name.clone().into_bytes()).map_err(|_|Error::<T>::SizeTooBig)?;
 
 					let job = OCWJob {
+						caller: who.clone(),
 						script_name: name,
-						state: JobState::Processing,
+						state: JobState::Pending,
 					};
-					match JobManager::<T>::get(&who) {
-						None => {
+					match JobQueue::<T>::try_get() {
+						Err(_) => {
 							let mut jobs = BoundedVec::<_, T::MaxJobs>::new();
 							let _ = jobs.try_push(job);
-							JobManager::<T>::insert(who.clone(), jobs);
+							JobQueue::<T>::set(jobs);
 						}
-						Some(_) => {
-							JobManager::<T>::mutate(&who, |val| {
-								if let Some(ref mut jobs) = val {
-									let _ = jobs.try_push(job);
-								}
+						Ok(_) => {
+							JobQueue::<T>::mutate( |jobs| {
+								let _ = jobs.try_push(job);
 							});
 						}
                     }
@@ -240,6 +250,14 @@ pub mod pallet {
 				block_number: frame_system::Pallet::<T>::block_number(),
 				script_name
 			});
+			Ok(())
+		}
+
+		#[pallet::call_index(2)]
+		#[pallet::weight(0)]
+		pub fn change_job_state(origin: OriginFor<T>) -> DispatchResult {
+			ensure_none(origin)?;
+			Self::handling_job().expect("Error at job handling");
 			Ok(())
 		}
 	}
@@ -306,12 +324,30 @@ impl MetaWasmStore {
 	}
 }
 
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
 enum WasmStoreErr {
 	ValueAlreadyExist,
 	IsStillRunning,
+	Unintialize,
+	// Other(&'a str)
 }
 
+// impl From<&str> for WasmStoreErr {
+// 	fn from(value: &str) -> Self {
+// 		WasmStoreErr::Other(value)
+// 	}
+// }
+
 impl<T: Config> Pallet<T> {
+	fn ocw_do_handling_job(block_number: BlockNumberFor<T>) -> Result<(), &'static str>{
+		let call = Call::change_job_state {};
+		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
+			.map_err(|()| "Unable to submit unsigned transaction.")?;
+		Self::deposit_event(Event::<T>::UnsignedTx {
+			when: block_number
+		});
+		Ok(())
+	}
 	fn simulate_heavy_computation(block_number: &BlockNumberFor<T>) -> Result<(),WasmStoreErr> {
 		let local_lock = b"wasmstore::ocw::do_heavy_computation_lock";
 		let current_time = timestamp().unix_millis();
@@ -383,24 +419,6 @@ impl<T: Config> Pallet<T> {
 
 	}
 
-	fn add_key_to_localstorage_key_list() -> Result<(),Error<T>> {
-		let key_list = ScriptKeyList::<T>::get();
-		for (i,val) in key_list.iter().enumerate() {
-			if val.len() > u32::MAX as usize {
-				return Err(Error::<T>::SizeTooBig);
-			}
-			Self::add_to_key_list(val, i, val.len() as u32);
-		}
-		Ok(())
-	}
-
-	fn add_key_to_keylist(key: BoundedVec<u8, T::MaxScriptKeyLen>) -> DispatchResult {
-		ScriptKeyList::<T>::try_mutate(|list| {
-			list.try_push(key).map_err(|_| Error::<T>::SizeTooBig)
-		})?;
-
-		Ok(())
-	}
 
 	fn add_to_key_list(key: &[u8],index : usize, key_len : u32) {
 		match local_storage_get(StorageKind::PERSISTENT,b"wasmstore::keylist") {
@@ -412,6 +430,37 @@ impl<T: Config> Pallet<T> {
 				local_storage_compare_and_set(StorageKind::PERSISTENT, b"wasmstore::keylist", Some(val), &new_val);
 			}
 		}
+	}
+
+	fn handling_job() -> Result<(),WasmStoreErr> {
+		match JobQueue::<T>::exists() {
+			true => {}
+			false => { return Err(WasmStoreErr::Unintialize) }
+		}
+		JobQueue::<T>::try_mutate(|val| {
+			Ok(for (i, ele) in val.iter_mut().enumerate() {
+				let local_key = b"wasmstore_jobs_executor";
+				match ele.state {
+					JobState::Pending => {
+						let mut local_val = local_storage_get(StorageKind::PERSISTENT, local_key).expect("Value for storage must be initialize");
+						let len = ele.encode().len() as u32;
+						let mut payload = Vec::with_capacity(4 + ele.encode().len());
+						payload.extend_from_slice(&len.to_le_bytes());
+						payload.extend_from_slice(&ele.encode());
+						local_val.extend_from_slice(&payload);
+						ele.state = JobState::Processing;
+						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
+					}
+					JobState::Processing => {
+						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
+					}
+					JobState::Idling => {
+						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
+					}
+				}
+			})
+		}
+		)
 	}
 }
 

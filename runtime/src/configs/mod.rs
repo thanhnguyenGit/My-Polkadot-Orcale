@@ -379,14 +379,14 @@ impl CreateSignedTransaction<ocw_pallet::Call<Self>> for Runtime {
 	}
 }
 
-impl SendTransactionTypes<ocw_pallet::Call<Self>> for Runtime {
-	type Extrinsic = UncheckedExtrinsic;
-	type OverarchingCall = RuntimeCall;
-}
-
 impl SigningTypes for Runtime {
 	type Public = <Signature as sp_runtime::traits::Verify>::Signer;
 	type Signature = Signature;
+}
+
+impl SendTransactionTypes<ocw_pallet::Call<Self>> for Runtime {
+	type Extrinsic = UncheckedExtrinsic;
+	type OverarchingCall = RuntimeCall;
 }
 
 impl ocw_pallet::Config for Runtime {
@@ -405,6 +405,47 @@ parameter_types! {
 	pub const MaxScriptStorageCap: u32 = 500;
 	pub const MaxScriptKeyLen : u32 = 256;
 	pub const MaxJobs : u32 = 25;
+}
+
+impl SendTransactionTypes<wasmstore_pallet::Call<Self>> for Runtime {
+	type Extrinsic = UncheckedExtrinsic;
+	type OverarchingCall = RuntimeCall;
+}
+
+impl CreateSignedTransaction<wasmstore_pallet::Call<Self>> for Runtime {
+	fn create_transaction<C: AppCrypto<Self::Public, Self::Signature>>(
+		call: Self::OverarchingCall,
+		public: Self::Public,
+		account: Self::AccountId,
+		nonce: Self::Nonce
+	) -> Option<(Self::OverarchingCall, <Self::Extrinsic as Extrinsic>::SignaturePayload)> {
+		let period = BlockHashCount::get() as u64;
+		let current_block = System::block_number()
+			.saturated_into::<u64>()
+			.saturating_sub(1);
+		let tip = 0;
+		let extra: SignedExtra = (
+			frame_system::CheckNonZeroSender::<Runtime>::new(),
+			frame_system::CheckSpecVersion::<Runtime>::new(),
+			frame_system::CheckTxVersion::<Runtime>::new(),
+			frame_system::CheckGenesis::<Runtime>::new(),
+			frame_system::CheckEra::<Runtime>::from(generic::Era::mortal(period, current_block)),
+			frame_system::CheckNonce::<Runtime>::from(nonce),
+			frame_system::CheckWeight::<Runtime>::new(),
+			pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
+			StorageWeightReclaim::<Runtime>::new(),
+			CheckMetadataHash::<Runtime>::new(true)
+		);
+		let raw_payload = SignedPayload::new(call, extra)
+			.map_err(|e| {
+				//log::warn!("Unable to create signed payload: {:?}", e);
+			})
+			.ok()?;
+		let signature = raw_payload.using_encoded(|payload| C::sign(payload, public))?;
+		let address = account;
+		let (call, extra, _) = raw_payload.deconstruct();
+		Some((call, (sp_runtime::MultiAddress::Id(address), signature.into(), extra)))
+	}
 }
 
 impl wasmstore_pallet::Config for Runtime {
