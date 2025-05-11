@@ -10,6 +10,7 @@ use sp_core::offchain::{StorageKind, Timestamp};
 use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set,sleep_until};
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
 use sp_io::hashing::blake2_256;
+use frame_support::traits::Get;
 
 use frame_system::{
 	self as system,
@@ -31,6 +32,9 @@ use scale_info::prelude::{
 	string::String,
 	format
 };
+use sp_runtime::traits::Clear;
+use sp_runtime::transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction, TransactionPriority};
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
@@ -60,6 +64,8 @@ pub mod pallet {
 		type MaxStringSize : Get<u32>;
 		#[pallet::constant]
 		type MaxJobs : Get<u32>;
+		#[pallet::constant]
+		type UnsignedPriority: Get<TransactionPriority>;
 	}
 	#[pallet::storage]
 	#[pallet::getter(fn get_script)]
@@ -71,7 +77,14 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_jobs)]
-	pub type JobQueue<T : Config> = StorageValue<_,BoundedVec<OCWJob<T>,T::MaxJobs>, ValueQuery>;
+	pub type JobQueue<T : Config> = StorageMap<
+		_,
+		Blake2_128Concat,
+		T::Hash,
+		OCWJob<T>,
+		OptionQuery
+	>;
+
 	#[derive(
 		Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound,Default
 	)]
@@ -79,7 +92,7 @@ pub mod pallet {
 	pub struct ScriptDetail<T: Config> {
 		publisher: T::AccountId,
 		block_number: BlockNumberFor<T>,
-		wasm_code: BoundedVec<u8, T::MaxScriptSize>,
+		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
 		hash: T::Hash,
 		name: BoundedVec<u8,T::MaxStringSize>,
 		typ : Type,
@@ -93,6 +106,7 @@ pub mod pallet {
 	pub struct OCWJob<T: Config> {
 		pub(crate) caller : T::AccountId,
 		pub(crate) script_name : BoundedVec<u8,T::MaxStringSize>,
+		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
 		pub(crate) state: JobState,
 	}
 
@@ -115,6 +129,7 @@ pub mod pallet {
 			hash_id : T::Hash,
 		},
 		RequestExecution {
+			job_id : T::Hash,
 			who: T::AccountId,
 			block_number: BlockNumberFor<T>,
 			script_name: String
@@ -146,9 +161,28 @@ pub mod pallet {
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn offchain_worker(block_number: BlockNumberFor<T>) {
-			// let _ = Self::simulate_heavy_computation(&block_number);
-			// let _ = Self::sent_meta_val(&block_number);
-			let _ = Self::ocw_do_handling_job(block_number);
+			let master_key = b"wasmstore_jobs_executor";
+			let job_key = local_storage_get(StorageKind::PERSISTENT, master_key).expect("Value uninitialize");
+			match Self::ocw_do_handling_job(&job_key).ok() {
+				None => {
+					log::error!("No payload returned");
+				}
+				Some(new_val) => {
+					log::info!("New value: {:?}",new_val);
+					let encoded = new_val.expect("There is no value");
+					match Payload::decode(&mut &encoded[..]) {
+						Ok(payload) => {
+							log::info!("Decoded payload successful {:?}", payload.job_id);
+							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &payload.job_id);
+							local_storage_set(StorageKind::PERSISTENT, &payload.job_id, &payload.job_content);
+						}
+						Err(e) => {
+							log::error!("Failed to decode: {:?}", e);
+						}
+					};
+
+				}
+			}
 		}
 	}
 
@@ -219,33 +253,28 @@ pub mod pallet {
 				BoundedVec::try_from(key).map_err(|_|Error::<T>::SizeTooBig)?
 			};
 			let val = <ScriptStorage<T>>::get(&script_key);
+			let mut job_id = T::Hashing::hash(&[0u8;32]);
 			match val {
 				None => {
 					return Err(Error::<T>::NoValExist.into());
 				}
-				Some(_) => {
+				Some(val) => {
 					let name = BoundedVec::try_from(script_name.clone().into_bytes()).map_err(|_|Error::<T>::SizeTooBig)?;
 
 					let job = OCWJob {
 						caller: who.clone(),
 						script_name: name,
+						wasm_code: val.wasm_code,
 						state: JobState::Pending,
 					};
-					match JobQueue::<T>::try_get() {
-						Err(_) => {
-							let mut jobs = BoundedVec::<_, T::MaxJobs>::new();
-							let _ = jobs.try_push(job);
-							JobQueue::<T>::set(jobs);
-						}
-						Ok(_) => {
-							JobQueue::<T>::mutate( |jobs| {
-								let _ = jobs.try_push(job);
-							});
-						}
-                    }
+					let script_key_hash = T::Hashing::hash(&job.encode());
+					job_id = T::Hashing::hash(&job.encode());
+					JobQueue::<T>::insert(script_key_hash, job);
+
 				}
 			}
 			Self::deposit_event(Event::<T>::RequestExecution {
+				job_id,
 				who,
 				block_number: frame_system::Pallet::<T>::block_number(),
 				script_name
@@ -255,10 +284,25 @@ pub mod pallet {
 
 		#[pallet::call_index(2)]
 		#[pallet::weight(0)]
-		pub fn change_job_state(origin: OriginFor<T>) -> DispatchResult {
+		pub fn change_job_state(origin: OriginFor<T>,block_number: BlockNumberFor<T>,key: T::Hash) -> DispatchResult {
 			ensure_none(origin)?;
-			Self::handling_job().expect("Error at job handling");
+			JobQueue::<T>::mutate(key, |val| {
+				if let Some(existing_job) = val {
+					existing_job.state = JobState::Processing;
+				}
+			});
 			Ok(())
+		}
+	}
+	#[pallet::validate_unsigned]
+	impl<T: Config> ValidateUnsigned for Pallet<T> {
+		type Call = Call<T>;
+		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+			if let Call::change_job_state {block_number,key} = call {
+				Self::validate_unsiged_transaction(block_number, key)
+			} else {
+				InvalidTransaction::Call.into()
+			}
 		}
 	}
 }
@@ -272,13 +316,10 @@ struct OCWState<T : Config > {
 	script: Vec<u8>,
 }
 
-enum State {
-	Idle,
-	Pending
-}
 #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
 struct MetaWasmStore {
-	key_list: BTreeMap<Vec<u8>, Vec<Vec<u8>>>
+	key_list: BTreeMap<Vec<u8>, Vec<Vec<u8>>>,
+	job_list : BTreeMap<Vec<u8>,Vec<u8>>
 }
 
 impl<T : Config> From<OCWState<T>> for Vec<u8> {
@@ -286,6 +327,8 @@ impl<T : Config> From<OCWState<T>> for Vec<u8> {
 		state.encode()
 	}
 }
+
+
 
 impl MetaWasmStore {
 	fn add_to_list(&mut self, key: &[u8],val: &[u8]){
@@ -329,6 +372,7 @@ enum WasmStoreErr {
 	ValueAlreadyExist,
 	IsStillRunning,
 	Unintialize,
+	Other,
 	// Other(&'a str)
 }
 
@@ -338,9 +382,17 @@ enum WasmStoreErr {
 // 	}
 // }
 
+#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug,Default)]
+struct Payload {
+	job_id : Vec<u8>,
+	job_content: Vec<u8>,
+	job_state: JobState,
+}
+
 impl<T: Config> Pallet<T> {
-	fn ocw_do_handling_job(block_number: BlockNumberFor<T>) -> Result<(), &'static str>{
-		let call = Call::change_job_state {};
+	fn ocw_do_change_job_state(key: T::Hash) -> Result<(), &'static str> {
+		let block_number = system::Pallet::<T>::block_number();
+		let call = Call::change_job_state {block_number,key };
 		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
 			.map_err(|()| "Unable to submit unsigned transaction.")?;
 		Self::deposit_event(Event::<T>::UnsignedTx {
@@ -432,36 +484,82 @@ impl<T: Config> Pallet<T> {
 		}
 	}
 
-	fn handling_job() -> Result<(),WasmStoreErr> {
-		match JobQueue::<T>::exists() {
-			true => {}
-			false => { return Err(WasmStoreErr::Unintialize) }
-		}
-		JobQueue::<T>::try_mutate(|val| {
-			Ok(for (i, ele) in val.iter_mut().enumerate() {
-				let local_key = b"wasmstore_jobs_executor";
-				match ele.state {
-					JobState::Pending => {
-						let mut local_val = local_storage_get(StorageKind::PERSISTENT, local_key).expect("Value for storage must be initialize");
-						let len = ele.encode().len() as u32;
-						let mut payload = Vec::with_capacity(4 + ele.encode().len());
-						payload.extend_from_slice(&len.to_le_bytes());
-						payload.extend_from_slice(&ele.encode());
-						local_val.extend_from_slice(&payload);
-						ele.state = JobState::Processing;
-						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
+	fn ocw_do_handling_job(params: &[u8]) -> Result<Option<Vec<u8>>, WasmStoreErr> {
+		log::info!("WASMSTORE: job handler running. Local value is {:?}", params);
+		let mut response = Payload::default();
+		for (key, mut job) in JobQueue::<T>::iter() {
+			return match job.state {
+				JobState::Pending => {
+					log::info!("Found pending job");
+
+					let mut key_list = params.encode();
+					let len = key.encode().len() as u32;
+					let mut job_key = Vec::with_capacity(4 + key.encode().len());
+					job_key.extend_from_slice(&len.to_le_bytes());
+					job_key.extend_from_slice(&key.encode());
+					key_list.extend_from_slice(&job_key);
+
+					match Self::ocw_do_change_job_state(key) {
+						Ok(_) => {
+							log::debug!("Job id: {:?}", job_key);
+							log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
+							response = Payload {
+								job_id: job_key.to_vec().encode(),
+								job_content: job.wasm_code.to_vec(),
+								job_state: job.state,
+							};
+						}
+						Err(e) => {log::error!("ERROR: Value not exist, msg: {}", e)}
 					}
-					JobState::Processing => {
-						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
-					}
-					JobState::Idling => {
-						log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}", ele.caller,ele.script_name,ele.state);
-					}
+
+					Ok(Some(response.encode()))
 				}
-			})
+
+				JobState::Processing => {
+					log::info!("Found processing job");
+					log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
+					response = Payload {
+						job_id: vec![],
+						job_content: vec![],
+						job_state: job.state,
+					};
+					Ok(Some(response.encode()))
+				}
+
+				JobState::Idling => {
+					log::info!("Found idling job");
+					log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
+					response = Payload {
+						job_id: vec![],
+						job_content: vec![],
+						job_state: job.state,
+					};
+					Ok(Some(response.encode()))
+				}
+			}
 		}
-		)
+		Ok(None)
 	}
+
+
+
+	fn validate_unsiged_transaction(block_number : &BlockNumberFor<T>,key: &T::Hash) -> TransactionValidity {
+		let current_block = system::Pallet::<T>::block_number();
+		if current_block < *block_number {
+			log::warn!("Unsiged Transaction period corrupted");
+			log::warn!("block number: {:#?}",block_number);
+			return InvalidTransaction::Future.into();
+		}
+		if key.is_clear() {
+			return InvalidTransaction::BadProof.into();
+		}
+		ValidTransaction::with_tag_prefix("WasmstoreJobWorker")
+			.priority(T::UnsignedPriority::get())
+			.longevity(5)
+			.propagate(true)
+			.build()
+	}
+
 }
 
 #[cfg(test)]

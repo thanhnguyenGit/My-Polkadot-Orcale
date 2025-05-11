@@ -400,10 +400,16 @@ impl ocw_pallet::Config for Runtime {
 
 
 parameter_types! {
+	// Unsigned Config
+	// ----------------------------------------
+	pub const WSGracePeriod: BlockNumber = 3;
+	pub const WSUnsignedInterval: BlockNumber = 3;
+	pub const WSUnsignedPriority: BlockNumber = 3;
+	// ----------------------------------------
 	pub const MaxScriptSize: u32 = 524_288;
 	pub const MaxStringSize: u32 = 256;
 	pub const MaxScriptStorageCap: u32 = 500;
-	pub const MaxScriptKeyLen : u32 = 256;
+	pub const MaxScriptKeyLen : u32 = 512;
 	pub const MaxJobs : u32 = 25;
 }
 
@@ -456,4 +462,5 @@ impl wasmstore_pallet::Config for Runtime {
 	type MaxScriptKeyLen = MaxScriptKeyLen;
 	type MaxStringSize = MaxStringSize;
 	type MaxJobs = MaxJobs;
+	type UnsignedPriority = WSUnsignedPriority;
 }
