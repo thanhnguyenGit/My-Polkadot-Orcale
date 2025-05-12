@@ -113,6 +113,7 @@ substrate-api-client = {version = "1.16.0" , default-features = true}
 # local dep
 # ------------------------------------------------------
 ocw-pallet = {workspace = true,default-features = false}
+model = {path = "../model", default-features = false}
 # ------------------------------------------------------
 [build-dependencies]
 substrate-build-script-utils.workspace = true

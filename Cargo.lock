@@ -5946,6 +5946,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "model"
+version = "0.1.0"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "lite-json",
+ "log",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "multiaddr"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7769,6 +7786,7 @@ dependencies = [
  "futures",
  "jsonrpsee",
  "log",
+ "model",
  "ocw-pallet",
  "pallet-transaction-payment-rpc",
  "parachain-template-runtime",
@@ -14970,6 +14988,7 @@ dependencies = [
  "frame-system",
  "lite-json",
  "log",
+ "model",
  "parity-scale-codec",
  "scale-info",
  "sp-core",

@@ -1,13 +1,11 @@
 [package]
-name = "wasmstore-pallet"
-description = "FRAME pallet template for defining custom runtime logic."
+name = "model"
 version = "0.1.0"
-license = "Unlicense"
+license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
-publish = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
@@ -24,8 +22,6 @@ sp-std = {workspace = true,default-features = false}
 sp-core = { workspace = true, default-features = false }
 sp-runtime = { workspace = true, default-features = false}
 lite-json = {workspace = true,default-features = false}
-#---LOCAL IMPORT---------------------------------------
-model = {path = "../../model", default-features = false}
 [dev-dependencies]
 #sp-core = { workspace = true, default-features = true }
 sp-io = { workspace = true, default-features = true}
@@ -35,21 +31,13 @@ sp-std = {workspace = true,default-features = true}
 [features]
 default = ["std"]
 std = [
-	"codec/std",
-	"frame-support/std",
-	"frame-system/std",
-	"scale-info/std",
-	"frame-benchmarking?/std",
-	"sp-runtime/std",
-	"sp-core/std",
-	"sp-io/std",
-	"sp-std/std",
-	"model/std"
-]
-
-runtime-benchmarks = [
-	"frame-benchmarking/runtime-benchmarks",
-	"frame-support/runtime-benchmarks",
-	"frame-system/runtime-benchmarks",
-	"sp-runtime/runtime-benchmarks",
+    "codec/std",
+    "frame-support/std",
+    "frame-system/std",
+    "scale-info/std",
+    "frame-benchmarking?/std",
+    "sp-runtime/std",
+    "sp-core/std",
+    "sp-io/std",
+    "sp-std/std",
 ]

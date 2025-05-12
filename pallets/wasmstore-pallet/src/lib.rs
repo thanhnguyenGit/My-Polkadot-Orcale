@@ -34,6 +34,8 @@ use scale_info::prelude::{
 };
 use sp_runtime::traits::Clear;
 use sp_runtime::transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction, TransactionPriority};
+//Local import
+use model::wasm_compatiable::Payload;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -137,6 +139,9 @@ pub mod pallet {
 		UnsignedTx {
 			when: BlockNumberFor<T>
 		},
+		Test {
+			key : Vec<u8>,
+		}
 	}
 
 	#[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
@@ -160,7 +165,7 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-		fn offchain_worker(block_number: BlockNumberFor<T>) {
+		fn offchain_worker(_block_number: BlockNumberFor<T>) {
 			let master_key = b"wasmstore_jobs_executor";
 			let job_key = local_storage_get(StorageKind::PERSISTENT, master_key).expect("Value uninitialize");
 			match Self::ocw_do_handling_job(&job_key).ok() {
@@ -168,12 +173,18 @@ pub mod pallet {
 					log::error!("No payload returned");
 				}
 				Some(new_val) => {
-					log::info!("New value: {:?}",new_val);
-					let encoded = new_val.expect("There is no value");
-					match Payload::decode(&mut &encoded[..]) {
+					if new_val.0 == None && new_val.1 == None {
+						log::info!("Waiting for Pending: job_id - {:?}, key-list{:?}", new_val.0, new_val.1);
+						return;
+					}
+					log::info!("New value: {:?}",new_val.0);
+					log::info!("Key list: {:?}",new_val.1);
+
+					let encoded = new_val.0.expect("There is no value");
+					match Payload::<JobState>::decode(&mut &encoded[..]) {
 						Ok(payload) => {
 							log::info!("Decoded payload successful {:?}", payload.job_id);
-							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &payload.job_id);
+							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &new_val.1.expect("There us valye"));
 							local_storage_set(StorageKind::PERSISTENT, &payload.job_id, &payload.job_content);
 						}
 						Err(e) => {
@@ -382,12 +393,12 @@ enum WasmStoreErr {
 // 	}
 // }
 
-#[derive(Encode, Decode, Clone, PartialEq, Eq, Debug,Default)]
-struct Payload {
-	job_id : Vec<u8>,
-	job_content: Vec<u8>,
-	job_state: JobState,
-}
+// #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug,Default)]
+// struct Payload {
+// 	job_id : Vec<u8>,
+// 	job_content: Vec<u8>,
+// 	job_state: JobState,
+// }
 
 impl<T: Config> Pallet<T> {
 	fn ocw_do_change_job_state(key: T::Hash) -> Result<(), &'static str> {
@@ -484,7 +495,7 @@ impl<T: Config> Pallet<T> {
 		}
 	}
 
-	fn ocw_do_handling_job(params: &[u8]) -> Result<Option<Vec<u8>>, WasmStoreErr> {
+	fn ocw_do_handling_job(params: &[u8]) -> Result<(Option<Vec<u8>>,Option<Vec<u8>>), WasmStoreErr> {
 		log::info!("WASMSTORE: job handler running. Local value is {:?}", params);
 		let mut response = Payload::default();
 		for (key, mut job) in JobQueue::<T>::iter() {
@@ -504,41 +515,46 @@ impl<T: Config> Pallet<T> {
 							log::debug!("Job id: {:?}", job_key);
 							log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
 							response = Payload {
-								job_id: job_key.to_vec().encode(),
+								job_id: job_key.encode(),
 								job_content: job.wasm_code.to_vec(),
 								job_state: job.state,
 							};
+							log::info!("Payload detail: job_id - {:?}", response.job_id);
 						}
 						Err(e) => {log::error!("ERROR: Value not exist, msg: {}", e)}
 					}
 
-					Ok(Some(response.encode()))
+					Ok((Some(response.encode()),Some(key_list)))
 				}
-
-				JobState::Processing => {
-					log::info!("Found processing job");
-					log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
-					response = Payload {
-						job_id: vec![],
-						job_content: vec![],
-						job_state: job.state,
-					};
-					Ok(Some(response.encode()))
+				_ => {
+					continue
 				}
-
-				JobState::Idling => {
-					log::info!("Found idling job");
-					log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
-					response = Payload {
-						job_id: vec![],
-						job_content: vec![],
-						job_state: job.state,
-					};
-					Ok(Some(response.encode()))
-				}
+				// JobState::Processing => {
+				// 	log::info!("Found processing job");
+				// 	log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
+				// 	response = Payload {
+				// 		job_id: vec![],
+				// 		job_content: vec![],
+				// 		job_state: job.state,
+				// 	};
+				// 	// Ok((Some(params.encode()),Some(params.encode())))
+				// 	Ok((None,None))
+				// }
+				//
+				// JobState::Idling => {
+				// 	log::info!("Found idling job");
+				// 	log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
+				// 	response = Payload {
+				// 		job_id: vec![],
+				// 		job_content: vec![],
+				// 		job_state: job.state,
+				// 	};
+				// 	// Ok((Some(params.encode()),Some(params.encode())))
+				// 	Ok((None,None))
+				// }
 			}
 		}
-		Ok(None)
+		Ok((None,None))
 	}
 
 

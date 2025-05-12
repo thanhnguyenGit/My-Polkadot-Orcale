@@ -2,7 +2,7 @@
 use std::{sync::Arc, time::Duration};
 use std::process::{Command, Stdio};
 use std::thread::sleep;
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, Encode, Error, MaxEncodedLen};
 use frame_benchmarking::__private::storage::bounded_vec::BoundedVec;
 use frame_benchmarking::__private::traits::tasks::__private::TypeInfo;
 use jsonrpsee::tokio::time::{sleep_until, Instant};
@@ -18,12 +18,14 @@ use parachain_template_runtime::{
     opaque::{Block, Hash},
 };
 use substrate_api_client::api::api_client::Api;
-
+// local import
+use model::wasm_compatiable::Payload;
 
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore_jobs_executor";
 enum StorageError {
     FailToWrite,
+    ParsingError,
 }
 
 pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
@@ -31,7 +33,9 @@ pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
     loop {
         if let Some(meta_val) = offchain_db.get(OCW_STORAGE_PREFIX,WASMSTORE_KEY_LIST) {
-            println!("Receive key {:?}", meta_val);
+            println!("Receive key_list {:?}", meta_val);
+            let x = key_list_parser(&meta_val);
+
         }
         sleep_until(Instant::now() + Duration::from_millis(6000)).await;
     }
@@ -68,3 +72,18 @@ async fn write_to_offchain_db(backend: Arc<TFullBackend<Block>>, key: &[u8], new
     }
 }
 
+fn key_list_parser<T,State>(key_list_raw : &T) -> Result<Payload<State>, StorageError>
+where
+    T : Encode + Decode + AsRef<[u8]>,
+    State : TypeInfo + Encode + Decode + MaxEncodedLen
+{
+    match Payload::<State>::decode(&mut &key_list_raw[..]) {
+        Ok(val) => {
+            Ok(val)
+        }
+        Err(e) => {
+            println!("Error decoding the payload from service {:?}", e);
+            Err(StorageError::ParsingError)
+        }
+    }
+}

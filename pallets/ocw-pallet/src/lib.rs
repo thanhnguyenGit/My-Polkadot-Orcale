@@ -155,10 +155,10 @@ pub mod pallet {
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn offchain_worker(block_number: BlockNumberFor<T>) {
             log::info!("Hello World from offchain workers!");
-            let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
-            log::debug!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
-            let average: Option<u32> = Self::average_price();
-            log::debug!("Current price: {:?}", average);
+            // let parent_hash = <system::Pallet<T>>::block_hash(block_number - 1u32.into());
+            // log::debug!("Current block: {:?} (parent hash: {:?})", block_number, parent_hash);
+            // let average: Option<u32> = Self::average_price();
+            // log::debug!("Current price: {:?}", average);
 
             // OffchainWorkerExt::new(Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number)?);
 
@@ -175,10 +175,10 @@ pub mod pallet {
             //     TransactionType::Raw => Self::fetch_price_and_send_raw_unsigned(block_number),
             //     TransactionType::None => Ok(()),
             // };
-            let res = Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number);
-            if let Err(e) = res {
-                log::error!("Error OCW1: {}", e);
-            }
+            // let res = Self::ocw_do_fetch_price_and_send_raw_unsigned(block_number);
+            // if let Err(e) = res {
+            //     log::error!("Error OCW1: {}", e);
+            // }
             // // let res2 = Self::ocw_do_fetch_price_and_send_unsigned_for_all_accounts(block_number);
             // if let Err(e) = res2 {
             //     log::error!("Error OCW2: {}", e);
