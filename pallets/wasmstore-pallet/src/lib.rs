@@ -35,7 +35,7 @@ use scale_info::prelude::{
 use sp_runtime::traits::Clear;
 use sp_runtime::transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction, TransactionPriority};
 //Local import
-use model::wasm_compatiable::Payload;
+use model::wasm_compatiable::{Payload,JobState};
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -112,13 +112,13 @@ pub mod pallet {
 		pub(crate) state: JobState,
 	}
 
-	#[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
-	pub enum JobState {
-		#[default]
-		Idling,
-		Pending,
-		Processing,
-	}
+	// #[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
+	// pub enum JobState {
+	// 	#[default]
+	// 	Idling,
+	// 	Pending,
+	// 	Processing,
+	// }
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -181,7 +181,7 @@ pub mod pallet {
 					log::info!("Key list: {:?}",new_val.1);
 
 					let encoded = new_val.0.expect("There is no value");
-					match Payload::<JobState>::decode(&mut &encoded[..]) {
+					match Payload::decode(&mut &encoded[..]) {
 						Ok(payload) => {
 							log::info!("Decoded payload successful {:?}", payload.job_id);
 							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &new_val.1.expect("There us valye"));

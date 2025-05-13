@@ -114,3 +114,4 @@ ocw-pallet = {path = "./pallets/ocw-pallet", default-features = false}
 offchain-worker = {path = "./pallets/offchain-worker", default-features = false}
 wasmstore-pallet = {path = "./pallets/wasmstore-pallet", default-features = false}
 model = {path = "./model",default-features = false}
+sc-client-db = { version = "0.44.1",default-features = false }

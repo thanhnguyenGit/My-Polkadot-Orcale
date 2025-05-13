@@ -48,7 +48,7 @@ use sp_keystore::KeystorePtr;
 use sp_runtime::print;
 
 //local project import
-use super::scripts_exec_manager::offchain_storage_monitoring;
+use super::scripts_exec_manager::run_executor;
 
 #[docify::export(wasm_executor)]
 type ParachainExecutor = WasmExecutor<ParachainHostFunctions>;
@@ -241,21 +241,6 @@ fn start_consensus(
 
 	Ok(())
 }
-/// TESTING FEATURE
-/// -------------------------------------------------------------------------------------------------------
-// run external binary
-const binary_url : &str = "/home/nguyen-viet-thanh/RustProjects/wasmruntime_test/target/release/runtime";
-fn run_executor() {
-	let res =  Command::new(binary_url)
-		.stdout(Stdio::piped())
-		.stderr(Stdio::piped())
-		.output();
-	match res {
-		Ok(_) => {println!("The binary is running")}
-		Err(_) => {println!("Fail to run binary")}
-	}
-}
-/// -------------------------------------------------------------------------------------------------------
 
 /// Start a node with the given parachain `Configuration` and relay chain `Configuration`.
 #[sc_tracing::logging::prefix_logs_with("Parachain")]
@@ -438,8 +423,8 @@ pub async fn start_parachain_node(
 			announce_block,
 		)?;
 	}
-	run_executor();
-	task_manager.spawn_handle().spawn("OffChainMonitor", "OffChainService", offchain_storage_monitoring(params.backend.clone()).boxed());
+	run_executor(&mut task_manager,params.backend.clone());
+
 	start_network.start_network();
 
 	Ok((task_manager, client))

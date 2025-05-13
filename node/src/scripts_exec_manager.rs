@@ -1,10 +1,12 @@
 // std
 use std::{sync::Arc, time::Duration};
+use std::collections::BTreeMap;
 use std::process::{Command, Stdio};
 use std::thread::sleep;
 use codec::{Decode, Encode, Error, MaxEncodedLen};
 use frame_benchmarking::__private::storage::bounded_vec::BoundedVec;
 use frame_benchmarking::__private::traits::tasks::__private::TypeInfo;
+use futures::FutureExt;
 use jsonrpsee::tokio::time::{sleep_until, Instant};
 // Substrate Imports
 use sc_client_api::Backend;
@@ -18,27 +20,52 @@ use parachain_template_runtime::{
     opaque::{Block, Hash},
 };
 use substrate_api_client::api::api_client::Api;
+use sc_client_db::offchain;
 // local import
 use model::wasm_compatiable::Payload;
 
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore_jobs_executor";
+#[derive(Debug)]
 enum StorageError {
     FailToWrite,
     ParsingError,
+    NoPendingPayloadFound,
 }
+
+struct JobManager {
+    job_pool: BTreeMap<Vec<u8>, Payload>
+}
+
+pub fn run_executor(task_manager: &TaskManager,backend : Arc<TFullBackend<Block>>) {
+    let group = "OffChainService";
+
+    task_manager.spawn_handle().spawn("OffChainMonitor", group, offchain_storage_monitoring(backend.clone()).boxed());
+}
+
 
 pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
     let mut offchain_db = backend.offchain_storage().expect("No storage found");
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
     loop {
-        if let Some(meta_val) = offchain_db.get(OCW_STORAGE_PREFIX,WASMSTORE_KEY_LIST) {
+        if let Some(meta_val) = read_from_offchain_db(backend.clone(),WASMSTORE_KEY_LIST).await {
             println!("Receive key_list {:?}", meta_val);
-            let x = key_list_parser(&meta_val);
-
+            match key_list_parser(&meta_val) {
+                Ok(val) => {
+                    println!("Payload: {:?}", val);
+                }
+                Err(_) => {
+                    println!("{:?} - msg: No pending payload in storage", StorageError::NoPendingPayloadFound);
+                }
+            }
         }
         sleep_until(Instant::now() + Duration::from_millis(6000)).await;
     }
+}
+
+pub async fn process_script(backend: Arc<TFullBackend<Block>>) {
+    let mut offchain_db = backend.offchain_storage().expect("No storage found");
+
 }
 
 async fn read_from_offchain_db(backend: Arc<TFullBackend<Block>>, key: &[u8]) -> Option<Vec<u8>>{
@@ -72,12 +99,9 @@ async fn write_to_offchain_db(backend: Arc<TFullBackend<Block>>, key: &[u8], new
     }
 }
 
-fn key_list_parser<T,State>(key_list_raw : &T) -> Result<Payload<State>, StorageError>
-where
-    T : Encode + Decode + AsRef<[u8]>,
-    State : TypeInfo + Encode + Decode + MaxEncodedLen
+fn key_list_parser(key_list_raw : &[u8]) -> Result<Payload, StorageError>
 {
-    match Payload::<State>::decode(&mut &key_list_raw[..]) {
+    match Payload::decode(&mut &key_list_raw[..]) {
         Ok(val) => {
             Ok(val)
         }
