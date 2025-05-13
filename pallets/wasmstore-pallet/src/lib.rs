@@ -506,16 +506,16 @@ impl<T: Config> Pallet<T> {
 					let mut key_list = params.encode();
 					let len = key.encode().len() as u32;
 					let mut job_key = Vec::with_capacity(4 + key.encode().len());
-					job_key.extend_from_slice(&len.to_le_bytes());
+					job_key.extend_from_slice(&len.encode());
 					job_key.extend_from_slice(&key.encode());
 					key_list.extend_from_slice(&job_key);
-
+					log::info!("Job id: {:?}", job_key);
+					log::info!("Key list: {:?}", key_list);
 					match Self::ocw_do_change_job_state(key) {
 						Ok(_) => {
-							log::debug!("Job id: {:?}", job_key);
 							log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
 							response = Payload {
-								job_id: job_key.encode(),
+								job_id: job_key,
 								job_content: job.wasm_code.to_vec(),
 								job_state: job.state,
 							};

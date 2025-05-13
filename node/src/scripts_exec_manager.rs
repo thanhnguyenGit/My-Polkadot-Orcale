@@ -7,10 +7,11 @@ use codec::{Decode, Encode, Error, MaxEncodedLen};
 use frame_benchmarking::__private::storage::bounded_vec::BoundedVec;
 use frame_benchmarking::__private::traits::tasks::__private::TypeInfo;
 use futures::FutureExt;
+use jsonrpsee::tokio::sync::mpsc;
 use jsonrpsee::tokio::time::{sleep_until, Instant};
 // Substrate Imports
 use sc_client_api::Backend;
-use sc_service::{Configuration, PartialComponents, TFullBackend, TFullClient, TaskManager};
+use sc_service::{Configuration, PartialComponents, SpawnTaskHandle, TFullBackend, TFullClient, TaskManager};
 use sp_api::__private::scale_info;
 use sp_core::offchain::{OffchainStorage, StorageKind};
 use sp_core::RuntimeDebug;
@@ -21,6 +22,7 @@ use parachain_template_runtime::{
 };
 use substrate_api_client::api::api_client::Api;
 use sc_client_db::offchain;
+use sp_runtime::print;
 // local import
 use model::wasm_compatiable::Payload;
 
@@ -39,14 +41,14 @@ struct JobManager {
 
 pub fn run_executor(task_manager: &TaskManager,backend : Arc<TFullBackend<Block>>) {
     let group = "OffChainService";
+    let executor = task_manager.spawn_handle();
+    executor.spawn("OffChainMonitor", group, offchain_monitor(backend.clone()).boxed());
 
-    task_manager.spawn_handle().spawn("OffChainMonitor", group, offchain_storage_monitoring(backend.clone()).boxed());
 }
 
-
-pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
+async fn offchain_monitor(backend : Arc<TFullBackend<Block>>) {
     let mut offchain_db = backend.offchain_storage().expect("No storage found");
-    offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
+    offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"");
     loop {
         if let Some(meta_val) = read_from_offchain_db(backend.clone(),WASMSTORE_KEY_LIST).await {
             println!("Receive key_list {:?}", meta_val);
@@ -59,11 +61,18 @@ pub async fn offchain_storage_monitoring(backend: Arc<TFullBackend<Block>>) {
                 }
             }
         }
+
         sleep_until(Instant::now() + Duration::from_millis(6000)).await;
     }
 }
 
-pub async fn process_script(backend: Arc<TFullBackend<Block>>) {
+async fn do_task(name: &'static str) {
+    println!("Hello world from {}",name);
+    sleep_until(Instant::now() + Duration::from_millis(200)).await;
+}
+
+
+async fn process_script(backend: Arc<TFullBackend<Block>>) {
     let mut offchain_db = backend.offchain_storage().expect("No storage found");
 
 }
