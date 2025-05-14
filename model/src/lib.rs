@@ -21,6 +21,7 @@ pub mod wasm_compatiable {
         Idling,
         Pending,
         Processing,
+        Finish,
     }
 }
 

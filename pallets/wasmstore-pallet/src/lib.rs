@@ -40,7 +40,7 @@ use model::wasm_compatiable::{Payload,JobState};
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
-	use codec::KeyedVec;
+	use codec::{decode_from_bytes, decode_vec_with_len, KeyedVec};
 	use frame_support::{dispatch::DispatchResultWithPostInfo, pallet_prelude::*, DefaultNoBound};
 	use frame_support::traits::dynamic_params::IntoKey;
 	use frame_system::pallet_prelude::*;
@@ -174,24 +174,22 @@ pub mod pallet {
 				}
 				Some(new_val) => {
 					if new_val.0 == None && new_val.1 == None {
-						log::info!("Waiting for Pending: job_id - {:?}, key-list{:?}", new_val.0, new_val.1);
+						log::info!("Waiting for Pending: job_id - {:?}, key-list - {:?}", new_val.0, new_val.1);
 						return;
 					}
 					log::info!("New value: {:?}",new_val.0);
 					log::info!("Key list: {:?}",new_val.1);
-
 					let encoded = new_val.0.expect("There is no value");
 					match Payload::decode(&mut &encoded[..]) {
 						Ok(payload) => {
 							log::info!("Decoded payload successful {:?}", payload.job_id);
-							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &new_val.1.expect("There us valye"));
+							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &new_val.1.expect("There is value"));
 							local_storage_set(StorageKind::PERSISTENT, &payload.job_id, &payload.job_content);
 						}
 						Err(e) => {
 							log::error!("Failed to decode: {:?}", e);
 						}
 					};
-
 				}
 			}
 		}
@@ -384,21 +382,7 @@ enum WasmStoreErr {
 	IsStillRunning,
 	Unintialize,
 	Other,
-	// Other(&'a str)
 }
-
-// impl From<&str> for WasmStoreErr {
-// 	fn from(value: &str) -> Self {
-// 		WasmStoreErr::Other(value)
-// 	}
-// }
-
-// #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug,Default)]
-// struct Payload {
-// 	job_id : Vec<u8>,
-// 	job_content: Vec<u8>,
-// 	job_state: JobState,
-// }
 
 impl<T: Config> Pallet<T> {
 	fn ocw_do_change_job_state(key: T::Hash) -> Result<(), &'static str> {
@@ -498,24 +482,21 @@ impl<T: Config> Pallet<T> {
 	fn ocw_do_handling_job(params: &[u8]) -> Result<(Option<Vec<u8>>,Option<Vec<u8>>), WasmStoreErr> {
 		log::info!("WASMSTORE: job handler running. Local value is {:?}", params);
 		let mut response = Payload::default();
-		for (key, mut job) in JobQueue::<T>::iter() {
+		for (job_id, mut job) in JobQueue::<T>::iter() {
 			return match job.state {
 				JobState::Pending => {
 					log::info!("Found pending job");
 
-					let mut key_list = params.encode();
-					let len = key.encode().len() as u32;
-					let mut job_key = Vec::with_capacity(4 + key.encode().len());
-					job_key.extend_from_slice(&len.encode());
-					job_key.extend_from_slice(&key.encode());
-					key_list.extend_from_slice(&job_key);
-					log::info!("Job id: {:?}", job_key);
+					let mut key_list = params.to_vec();
+					key_list.extend_from_slice(&job_id.encode());
+					log::info!("Job id: {:?}", job_id);
+					log::info!("Job id SCALE-encoded {:?}",job_id.encode());
 					log::info!("Key list: {:?}", key_list);
-					match Self::ocw_do_change_job_state(key) {
+					match Self::ocw_do_change_job_state(job_id) {
 						Ok(_) => {
 							log::info!("WASMSTORE! OCW job: caller - {:?}, script_name: {:?}, state: {:?}",job.caller, job.script_name, job.state);
 							response = Payload {
-								job_id: job_key,
+								job_id : job_id.encode(),
 								job_content: job.wasm_code.to_vec(),
 								job_state: job.state,
 							};

@@ -42,8 +42,22 @@ function run_zombienet() {
     return 1
   fi
 }
+
+function cleanup_zombienet() {
+    echo "Cleaning up Zombienet state..."
+    NODE_DATA_PATH="$HOME/.local/share/parachain-template-node"
+    if [ -d "$NODE_DATA_PATH" ]; then
+          echo "Cleaning up local node data at $NODE_DATA_PATH..."
+          rm -rf "$NODE_DATA_PATH"
+          echo "Local node data removed."
+    else
+          echo "No local node data found at $NODE_DATA_PATH."
+    fi
+    echo "Zombienet data removed from ~/.zombienet"
+}
+
 echo "$HEADLINE"
-run_build_release && create_dev_chain_specs && run_zombienet
+run_build_release && create_dev_chain_specs && run_zombienet && cleanup_zombienet
 echo "Finish running"
 
 

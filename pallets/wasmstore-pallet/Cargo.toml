@@ -24,6 +24,7 @@ sp-std = {workspace = true,default-features = false}
 sp-core = { workspace = true, default-features = false }
 sp-runtime = { workspace = true, default-features = false}
 lite-json = {workspace = true,default-features = false}
+bytes = {version = "1.9.0", default-features = false}
 #---LOCAL IMPORT---------------------------------------
 model = {path = "../../model", default-features = false}
 [dev-dependencies]
