@@ -41,10 +41,9 @@ enum StorageError {
 }
 
 struct JobPool {
-    job_pool: BTreeMap<Vec<u8>,Vec<u8>>,
     result_rx : mpsc::Receiver<JobResult>,
 }
-#[derive(Decode,Encode)]
+#[derive(Decode,Encode,Debug)]
 struct JobResult {
     job_id : Vec<u8>,
     result : Vec<u8>
@@ -52,12 +51,8 @@ struct JobResult {
 impl JobPool {
     fn new(receiver: mpsc::Receiver<JobResult>) -> JobPool {
         JobPool {
-            job_pool: BTreeMap::new(),
             result_rx: receiver
         }
-    }
-    fn register_job(&mut self) {
-
     }
     async fn result_listener(&mut self,backend : Arc<TFullBackend<Block>>) {
         loop {
@@ -69,11 +64,7 @@ impl JobPool {
                     job_result: result,
                     job_state: JobState::Finish,
                 };
-                if let Some(mut value) = read_from_offchain_db(backend.clone(), WASMSTORE_RESULT_LIST).await {
-                    value.extend_from_slice(&job_id);
-                    let _ = write_to_offchain_db(backend.clone(), WASMSTORE_RESULT_LIST, &value).await;
-                }
-
+                println!("Receive Job result: {:?}", job_id);
                 match write_to_offchain_db(backend.clone(), &job_id, &respone.encode()).await {
                     Ok(_) => {
                         println!("Write result to local storage: {:?}", respone);
@@ -81,6 +72,12 @@ impl JobPool {
                     Err(e) => {
                         println!("{:?} - msg: Failed to write job: {:?} to local storage", e, job_id)
                     }
+                }
+                if let Some(value) = read_from_offchain_db(backend.clone(), WASMSTORE_RESULT_LIST).await {
+                    let mut result = value;
+                    result.extend_from_slice(&job_id);
+                    println!("Result_key_list Value {:?}",result);
+                    let _ = write_to_offchain_db(backend.clone(), WASMSTORE_RESULT_LIST, &result).await;
                 }
             }
         }
@@ -113,28 +110,27 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                         // clear the key_list in K-V
                         let _ = write_to_offchain_db(backend.clone(), WASMSTORE_KEY_LIST, b"init").await;
                         // Iter over key_list to assigned job to spawned task.
-                        for i in key_list.iter() {
+                        for (index,i) in key_list.iter().enumerate() {
                             let task_backend = backend.clone();
                             let value = i.clone();
                             let tx = job_tx.clone();
-                            executor.clone().spawn("",group,async move {
-                                let val = value.as_slice();
-                                if let Some(encoded_payload) = read_from_offchain_db(task_backend.clone(), val).await {
-                                    match RequestPayload::decode(&mut &encoded_payload[..]) {
+                            let val = value.as_slice();
+                            let encoded_payload = read_from_offchain_db(task_backend.clone(), val).await;
+                            executor.clone().spawn_blocking("","",async move {
+                                if let Some(res) = encoded_payload {
+                                    match RequestPayload::decode(&mut &res[..]) {
                                         Ok(payload) => {
                                             println!("Payload Job id: {:?}", payload.job_id);
-                                            executor.clone().spawn_blocking("", group,async move {
-                                                let _ = match process_wasm(&payload.job_content, &payload.job_id).await {
-                                                    Ok(res) => {
-                                                        let _ = tx.send(res).await;
-                                                        Ok(())
-                                                    }
-                                                    Err(e) => {
-                                                        println!("ERROR: {:?}, failed to process wasm", e);
-                                                        Err(e)
-                                                    }
-                                                };
-                                            });
+                                            let _ = match process_wasm(&payload.job_content, &payload.job_id).await {
+                                                Ok(res) => {
+                                                    let _ = tx.send(res).await;
+                                                    Ok(())
+                                                }
+                                                Err(e) => {
+                                                    println!("ERROR: {:?}, failed to process wasm", e);
+                                                    Err(e)
+                                                }
+                                            };
                                         }
                                         Err(e) => {
                                             eprintln!("{:?} - msg: Failed to decode payload", e);
@@ -142,8 +138,6 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
 
                                     }
                                 }
-
-                                sleep_until(Instant::now() + Duration::from_millis(600)).await;
                             })
                         }
                     }
@@ -153,7 +147,7 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                 }
             }
 
-            sleep_until(Instant::now() + Duration::from_millis(6000)).await;
+            sleep_until(Instant::now() + Duration::from_millis(1000)).await;
         }
     });
 }

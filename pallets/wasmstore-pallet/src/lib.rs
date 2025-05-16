@@ -190,9 +190,23 @@ pub mod pallet {
 				}
 			}
 			match Self::ocw_do_handling_result(&result_key) {
-				Ok(val) => {
-					for i in val {
-                        log::info!("Finished Result: {:?}", i)
+				Ok(result_key_list) => {
+					for result_key in result_key_list.iter() {
+						log::info!("Result list len: {:?}", result_key_list.len());
+						match local_storage_get(StorageKind::PERSISTENT, result_key) {
+							None => {}
+							Some(raw_val) => {
+								match ResponePayload::decode(&mut &raw_val[..]) {
+									Ok(res) => {
+										log::info!("Finished Result: K - {:?}, V - {:?}", result_key, res);
+									}
+									Err(e) => {
+										log::error!("ERROR: {:?} - msg Failed to decode response",e)
+									}
+								}
+							}
+						}
+
                     }
 				}
 				Err(e) => {}
@@ -309,7 +323,6 @@ pub mod pallet {
 			ensure_none(origin)?;
 			JobQueue::<T>::mutate(key, |val| {
 				if let Some(existing_job) = val {
-					existing_job.state = JobState::Processing;
 					match existing_job.state {
 						JobState::Pending => {existing_job.state = JobState::Processing}
 						JobState::Processing => {existing_job.state = JobState::Finish}
@@ -544,11 +557,11 @@ impl<T: Config> Pallet<T> {
 			log::error!("No result yet");
 			return Err(WasmStoreErr::IsStillRunning)
 		}
-		let key_list = &params[4..];
-		let chunks = key_list.chunks(32).map(|chunk| {
+		let data = &params[4..];
+		let key_list = data.chunks(32).map(|chunk| {
 			chunk.to_vec()
 		}).collect::<Vec<Vec<u8>>>();
-		Ok(chunks)
+		Ok(key_list)
 	}
 
 	fn validate_unsiged_transaction(block_number : &BlockNumberFor<T>,key: &T::Hash) -> TransactionValidity {
