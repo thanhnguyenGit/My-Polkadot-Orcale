@@ -10,9 +10,15 @@ pub mod wasm_compatiable {
 
 
     #[derive(Decode,Encode,Clone, PartialEq, Eq, Debug,Default)]
-    pub struct Payload {
+    pub struct RequestPayload {
         pub job_id : Vec<u8>,
         pub job_content: Vec<u8>,
+        pub job_state: JobState,
+    }
+    #[derive(Decode,Encode,Clone, PartialEq, Eq, Debug,Default)]
+    pub struct ResponePayload {
+        pub job_id : Vec<u8>,
+        pub job_result: Vec<u8>,
         pub job_state: JobState,
     }
     #[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
@@ -24,4 +30,5 @@ pub mod wasm_compatiable {
         Finish,
     }
 }
+
 

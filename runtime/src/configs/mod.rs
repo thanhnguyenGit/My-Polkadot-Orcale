@@ -411,6 +411,7 @@ parameter_types! {
 	pub const MaxScriptStorageCap: u32 = 500;
 	pub const MaxScriptKeyLen : u32 = 512;
 	pub const MaxJobs : u32 = 25;
+	pub const MaxResultSize : u32 = 1024;
 }
 
 impl SendTransactionTypes<wasmstore_pallet::Call<Self>> for Runtime {
@@ -461,6 +462,7 @@ impl wasmstore_pallet::Config for Runtime {
 	type MaxScriptStorageCap = MaxScriptStorageCap;
 	type MaxScriptKeyLen = MaxScriptKeyLen;
 	type MaxStringSize = MaxStringSize;
+	type MaxResultSize = MaxResultSize;
 	type MaxJobs = MaxJobs;
 	type UnsignedPriority = WSUnsignedPriority;
 }
