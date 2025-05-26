@@ -6407,6 +6407,7 @@ dependencies = [
  "frame-system",
  "lite-json",
  "log",
+ "pallet-balances",
  "parity-scale-codec",
  "scale-info",
  "sp-core",

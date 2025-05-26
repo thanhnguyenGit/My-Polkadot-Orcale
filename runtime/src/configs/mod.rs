@@ -316,9 +316,9 @@ impl pallet_utility::Config for Runtime {
 }
 
 
-// parameter_types! {
-// 	pub const MinStakeAmount: u32 = 1;
-// }
+parameter_types! {
+	pub const MinStakeAmount: u32 = 1;
+}
 //
 // impl custom_pallet::Config for Runtime {
 //     type RuntimeEvent = RuntimeEvent;
@@ -387,6 +387,7 @@ impl ocw_pallet::Config for Runtime {
 	type UnsignedInterval = UnsignedInterval;
 	type UnsignedPriority = UnsignedPriority;
 	type MaxPrices = MaxPrices;
+	type MinStakeAmount = MinStakeAmount;
 }
 
 

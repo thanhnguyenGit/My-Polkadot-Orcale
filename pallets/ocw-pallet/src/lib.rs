@@ -74,6 +74,13 @@ pub mod crypto {
 pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
+    use frame_support::traits::{
+        dynamic_params::IntoKey,
+        Currency,
+        LockableCurrency,
+        ReservableCurrency
+    };
+    use pallet_balances as PalletBalances;
     use frame_support::pallet_prelude::*;
     use sp_runtime::traits::{ensure_pow, BlockNumber};
     #[pallet::pallet]
@@ -81,7 +88,7 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config {
+    pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_balances::Config{
         /*
             The identifier type for an offchain worker.
             Use for when using OCW to make a sigened transaction
@@ -99,6 +106,8 @@ pub mod pallet {
 
         #[pallet::constant]
         type MaxPrices: Get<u32>;
+        #[pallet::constant]
+        type MinStakeAmount : Get<u32>;
     }
 
 
@@ -116,7 +125,20 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn get_hash_value)]
     pub(super) type HashStore<T: Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8, ConstU32<256>>,T::Hash,OptionQuery>;
-    
+
+    #[pallet::storage]
+    #[pallet::getter(fn get_staked_processor)]
+    pub type StakedProcessors<T : Config> = StorageMap<_, Blake2_128Concat, T::AccountId, Meta<T>, OptionQuery>;
+
+    #[derive(
+        Encode, Decode, MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound,
+    )]
+    #[scale_info(skip_type_params(T))]
+    pub struct Meta<T: Config> {
+        pub(crate) balance: T::Balance,
+        pub(crate) credit_score: u32,
+    }
+
     /// Defines the block when next unsigned transaction will be accepted.
     ///
     /// To prevent spam of unsigned (and unpayed!) transactions on the network,
@@ -138,7 +160,11 @@ pub mod pallet {
         AddNewUrl {
             who: T::AccountId,
             size: u32
-        }
+        },
+        ProcessorStaked {
+            who: T::AccountId,
+            amount: T::Balance
+        },
     }
 
     #[pallet::error]
@@ -146,7 +172,9 @@ pub mod pallet {
         UnresolveOrigin,
         UrlTooLong,
         BytesTooLong,
-        HashingProblem
+        HashingProblem,
+        InsufficientFund,
+        AlreadyStaked,
     }
     pub const OCW_STORAGE_KEY : &[u8] = b"ocw-worker";
     pub const LOCK_BLOCK_EXPIRATION: u32 = 3;
@@ -189,6 +217,25 @@ pub mod pallet {
     /// A public part of the pallet.
     #[pallet::call]
     impl<T: Config> Pallet<T> {
+        #[pallet::weight(Weight::from_parts(10_000, 0) + T::DbWeight::get().writes(1))]
+        pub fn stake(origin: OriginFor<T>, stake_amount: T::Balance) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            // ensure!(!StakedProcessors::<T>::contains_key(&who), Error::<T>::AlreadyStaked);
+            // ensure!(stake_amount.into() >= T::MinStakeAmount::get(), Error::<T>::InsufficientFund);
+            match PalletBalances::Pallet::<T>::reserve(&who, stake_amount) {
+                Ok(_) => {
+                    log::info!("SUCCESS - msg: Reserve: {:?} succesfull for {:?}", stake_amount,who);
+                    Self::deposit_event(Event::<T>::ProcessorStaked {
+                        who,
+                        amount: stake_amount
+                    });
+                }
+                Err(e) => {
+                    log::error!("{:?} - msg: Faild to reverse for {:?}",e,who)
+                }
+            }
+            Ok(().into())
+        }
         #[pallet::weight(0)]
         pub fn submit_price(origin: OriginFor<T>, price: u32) -> DispatchResultWithPostInfo {
             // Retrieve sender of the transaction.

@@ -18,11 +18,11 @@ pub mod pallet {
         LockableCurrency,
         ReservableCurrency
     };
+    use pallet_balances as PalletBalances;
     use frame_system::pallet_prelude::*;
     use sp_core::Public;
     use sp_io::offchain::timestamp;
     use sp_runtime::traits::{CheckedAdd, One, Hash};
-    use pallet_balances as PalletBalances;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
