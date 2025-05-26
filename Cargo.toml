@@ -6,7 +6,7 @@ repository = "https://github.com/paritytech/polkadot-sdk-parachain-template.git"
 edition = "2021"
 
 [workspace]
-members = ["model","node","pallets/wasmstore-pallet","pallets/offchain-worker", "pallets/custom-pallet","pallets/ocw-pallet", "pallets/template", "runtime", "model"]
+members = ["model","node","pallets/wasmstore-pallet","pallets/offchain-worker", "pallets/custom-pallet","pallets/ocw-pallet", "pallets/template", "runtime", "model", "script-executor"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -115,3 +115,4 @@ offchain-worker = {path = "./pallets/offchain-worker", default-features = false}
 wasmstore-pallet = {path = "./pallets/wasmstore-pallet", default-features = false}
 model = {path = "./model",default-features = false}
 sc-client-db = { version = "0.44.1",default-features = false }
+pallet-staking = {version = "38.0.0", default-features = false}

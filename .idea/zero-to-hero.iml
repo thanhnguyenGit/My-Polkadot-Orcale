@@ -11,6 +11,7 @@
       <sourceFolder url="file://$MODULE_DIR$/pallets/offchain-worker/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/pallets/wasmstore-pallet/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/model/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/script-executor/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

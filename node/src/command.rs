@@ -288,6 +288,16 @@ impl CliConfiguration<Self> for RelayChainCli {
 	}
 
 	fn keystore_params(&self) -> Option<&KeystoreParams> {
+		match self.base.base.keystore_params() {
+			Some(val) => {
+				println!("KeystoreParams Info: path: {:?}, password: {:?}", val.keystore_path, val.password)
+
+			}	
+			None => {
+				println!("There is no value")
+			}
+		}
+
 		self.base.base.keystore_params()
 	}
 
@@ -375,6 +385,8 @@ impl CliConfiguration<Self> for RelayChainCli {
 	}
 
 	fn node_name(&self) -> Result<String> {
+		let node_name = self.base.base.node_name().expect("There should be a name");
+		println!("Node namae: {}",node_name.as_str());
 		self.base.base.node_name()
 	}
 }

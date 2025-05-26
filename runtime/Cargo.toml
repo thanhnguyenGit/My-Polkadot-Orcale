@@ -80,6 +80,7 @@ custom-pallet.workspace = true
 ocw-pallet.workspace = true
 offchain-worker.workspace = true
 wasmstore-pallet.workspace = true
+pallet-staking.workspace = true
 [features]
 default = ["std"]
 std = [

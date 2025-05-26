@@ -43,10 +43,9 @@ use frame_support::{
 };
 use frame_system::{limits::{BlockLength, BlockWeights}, CheckGenesis, CheckMortality, CheckNonZeroSender, CheckNonce, CheckSpecVersion, CheckTxVersion, CheckWeight, EnsureRoot};
 use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendTransactionTypes, SigningTypes};
-use pallet_transaction_payment::ChargeTransactionPayment;
 use pallet_xcm::{EnsureXcm, IsVoiceOfBody};
 use parachains_common::message_queue::{NarrowOriginToSibling, ParaIdToSibling};
-use parachains_common::MINUTES;
+
 use polkadot_runtime_common::{
 	xcm_sender::NoPriceForMessageDelivery, BlockHashCount, SlowAdjustingFeeUpdate,
 };
@@ -57,7 +56,6 @@ use sp_runtime::generic::SignedPayload;
 use sp_runtime::traits::{Extrinsic, SignaturePayload};
 use sp_version::RuntimeVersion;
 use xcm::latest::prelude::BodyId;
-use custom_pallet::Call;
 // Local module imports
 use super::{weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight}, AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys, Signature, SignedExtra, System, UncheckedExtrinsic, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION};
 use xcm_config::{RelayLocation, XcmOriginToTransactDispatchOrigin};
@@ -317,23 +315,16 @@ impl pallet_utility::Config for Runtime {
     type WeightInfo = pallet_utility::weights::SubstrateWeight<Runtime>;
 }
 
+
 // parameter_types! {
-// 	pub const DefaultGracePeriod: BlockNumber = 3;
-// 	pub const DefaultMaxCatFact: u32 = 20;
-// }
-//
-// impl SendTransactionTypes<Call<Self>> for Runtime {
-// 	type Extrinsic = UncheckedExtrinsic;
-// 	type OverarchingCall = RuntimeCall;
+// 	pub const MinStakeAmount: u32 = 1;
 // }
 //
 // impl custom_pallet::Config for Runtime {
 //     type RuntimeEvent = RuntimeEvent;
-// 	type GracePeriod = ConstU32<3>;
-// 	type UnsignedInterval = ConstU32<3>;
-// 	type UnsignedPriority = ConstU64<3>;
-// 	type MaxCatFact = ConstU32<50>;
+//
 // 	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
+// 	type MinStakeAmount = MinStakeAmount;
 // }
 
 parameter_types! {
@@ -412,6 +403,7 @@ parameter_types! {
 	pub const MaxScriptKeyLen : u32 = 512;
 	pub const MaxJobs : u32 = 25;
 	pub const MaxResultSize : u32 = 1024;
+	pub const MaxResultSubmition : u32 = 15;
 }
 
 impl SendTransactionTypes<wasmstore_pallet::Call<Self>> for Runtime {
@@ -463,6 +455,8 @@ impl wasmstore_pallet::Config for Runtime {
 	type MaxScriptKeyLen = MaxScriptKeyLen;
 	type MaxStringSize = MaxStringSize;
 	type MaxResultSize = MaxResultSize;
+	type MaxResultSubmition = ();
 	type MaxJobs = MaxJobs;
 	type UnsignedPriority = WSUnsignedPriority;
 }
+

@@ -9,6 +9,7 @@ use parachain_template_runtime::{
 	apis::RuntimeApi,
 	opaque::{Block, Hash},
 };
+use sp_core::sr25519;
 use sp_keystore::*;
 // Cumulus Imports
 use cumulus_client_collator::service::CollatorService;
@@ -45,10 +46,10 @@ use sc_transaction_pool_api::OffchainTransactionPoolFactory;
 use sp_core::offchain::OffchainStorage;
 use sp_io::misc::print_num;
 use sp_keystore::KeystorePtr;
-use sp_runtime::print;
+use sp_core::crypto::{ByteArray, CryptoTypeId, KeyTypeId};
 
 //local project import
-use super::scripts_exec_manager::run_executor;
+use super::scripts_exec_manager::{run_executor,check_keystore};
 
 #[docify::export(wasm_executor)]
 type ParachainExecutor = WasmExecutor<ParachainHostFunctions>;
@@ -132,6 +133,7 @@ pub fn new_partial(config: &Configuration) -> Result<Service, sc_service::Error>
 		&task_manager,
 	);
 
+	check_keystore(keystore_container.keystore().clone());
 	let keystore = keystore_container.keystore();
 	if config.offchain_worker.enabled {
 		log::info!("offchain worker enabled");
@@ -215,6 +217,7 @@ fn start_consensus(
 		client.clone(),
 	);
 
+
 	let params = AuraParams {
 		create_inherent_data_providers: move |_, ()| async move { Ok(()) },
 		block_import,
@@ -281,7 +284,7 @@ pub async fn start_parachain_node(
 	let validator = parachain_config.role.is_authority();
 	let transaction_pool = params.transaction_pool.clone();
 	let import_queue_service = params.import_queue.service();
-
+	
 	// NOTE: because we use Aura here explicitly, we can use `CollatorSybilResistance::Resistant`
 	// when starting the network.
 	let (network,
@@ -336,6 +339,7 @@ pub async fn start_parachain_node(
 			crate::rpc::create_full(deps).map_err(Into::into)
 		})
 	};
+
 
 	sc_service::spawn_tasks(sc_service::SpawnTasksParams {
 		rpc_builder,

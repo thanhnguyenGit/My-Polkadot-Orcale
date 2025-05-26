@@ -116,7 +116,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn get_hash_value)]
     pub(super) type HashStore<T: Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8, ConstU32<256>>,T::Hash,OptionQuery>;
-
+    
     /// Defines the block when next unsigned transaction will be accepted.
     ///
     /// To prevent spam of unsigned (and unpayed!) transactions on the network,

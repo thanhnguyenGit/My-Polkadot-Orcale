@@ -34,16 +34,23 @@ use scale_info::prelude::{
 };
 use sp_runtime::traits::Clear;
 use sp_runtime::transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction, TransactionPriority};
-//Local import
+// Pallet import
+use pallet_session as PalletSession;
+use pallet_authorship as PalletAuthorship;
+use pallet_collator_selection as PalletCollators;
+use pallet_balances as PalletBalances;
+// Local import
 use model::wasm_compatiable::{RequestPayload,ResponePayload,JobState};
 
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
-	use codec::{decode_from_bytes, decode_vec_with_len, KeyedVec};
+	use codec::{decode_from_bytes, decode_vec_with_len, Codec, KeyedVec};
 	use frame_support::{dispatch::DispatchResultWithPostInfo, pallet_prelude::*, DefaultNoBound};
 	use frame_support::traits::dynamic_params::IntoKey;
 	use frame_system::pallet_prelude::*;
+	use pallet_collator_selection::CandidateList;
+	use sp_core::Public;
 	use sp_io::offchain::timestamp;
 	use sp_runtime::traits::{CheckedAdd, One, Hash};
 
@@ -51,9 +58,10 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
-	pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>>  {
+	pub trait Config: frame_system::Config + pallet_collator_selection::Config + pallet_balances::Config + pallet_authorship::Config + pallet_session::Config + CreateSignedTransaction<Call<Self>>  {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		type WeightInfo: crate::weights::WeightInfo;
+		// type AuthorityId : Member + Codec + Public;
 		#[pallet::constant]
 		type MaxScriptSize : Get<u32>;
 
@@ -67,6 +75,8 @@ pub mod pallet {
 		#[pallet::constant]
 		type MaxResultSize : Get<u32>;
 		#[pallet::constant]
+		type MaxResultSubmition : Get<u32>;
+		#[pallet::constant]
 		type MaxJobs : Get<u32>;
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
@@ -78,7 +88,7 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_script_result)]
-	pub type ScriptResult<T : Config> = StorageMap<_,Blake2_128Concat,BoundedVec<u8,T::MaxScriptKeyLen>,BoundedVec<u8,T::MaxResultSize>, ValueQuery>;
+	pub type ScriptResult<T : Config> = StorageMap<_,Blake2_128Concat,T::Hash,BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition>, OptionQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_jobs)]
@@ -115,6 +125,16 @@ pub mod pallet {
 		pub(crate) state: JobState,
 	}
 
+	#[derive(
+		Encode, Decode,MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, Default
+	)]
+	#[scale_info(skip_type_params(T))]
+	pub struct SignedScriptResult<T: Config> {
+		// pub(crate) signature : T::Signature,
+		pub(crate) result_data : BoundedVec<u8,T::MaxResultSize>,
+		// pub(crate) public : T::AccountId,
+	}
+
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
@@ -135,7 +155,8 @@ pub mod pallet {
 			when: BlockNumberFor<T>
 		},
 		Test {
-			key : Vec<u8>,
+			key : Vec<T::AccountId>,
+
 		}
 	}
 
@@ -155,7 +176,7 @@ pub mod pallet {
 		ValAlreadyExist,
 		NoValExist,
 		MaxCapReach,
-
+		InvalidOperation,
 	}
 
 	#[pallet::hooks]
@@ -163,30 +184,47 @@ pub mod pallet {
 		fn offchain_worker(_block_number: BlockNumberFor<T>) {
 			let master_key = b"wasmstore_jobs_executor";
 			let mastter_result_key = b"wasmstore_jobs_result";
+
 			let job_key = local_storage_get(StorageKind::PERSISTENT, master_key).expect("Value uninitialize");
 			let result_key = local_storage_get(StorageKind::PERSISTENT, mastter_result_key).expect("Value uninitialize");
+
 			match Self::ocw_do_handling_job(&job_key).ok() {
 				None => {
 					log::error!("No payload returned");
 				}
-				Some(new_val) => {
-					if new_val.0 == None && new_val.1 == None {
-						log::info!("Waiting for Pending: job_id - {:?}, key-list - {:?}", new_val.0, new_val.1);
-						return;
+				Some(command) => {
+					match command {
+						Command::None => {
+							log::info!("Waiting for Pending");
+							return;
+						}
+						Command::RequestData { key_list, data } => {
+							log::info!("New value: {:?}",data);
+							log::info!("Key list: {:?}",key_list);
+							let mut encoded_payload = data;
+							match RequestPayload::decode(&mut &encoded_payload[..]) {
+								Ok(payload) => {
+									log::info!("Decoded payload successful {:?}", payload.job_id);
+									local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &key_list);
+									local_storage_set(StorageKind::PERSISTENT, &payload.job_id, &encoded_payload);
+								}
+								Err(e) => {
+									log::error!("Failed to decode: {:?}", e);
+								}
+							};
+						}
+						Command::ResultData {result_list} => {
+							for key in result_list.iter() {
+								match local_storage_get(StorageKind::PERSISTENT, &key) {
+									None => {}
+									Some(val) => {
+										// let _ = Self::ocw_do_submit_result(key, val);
+										log::info!("Found finished result: {:08x?}", key);
+									}
+								}
+							}
+						}
 					}
-					log::info!("New value: {:?}",new_val.0);
-					log::info!("Key list: {:?}",new_val.1);
-					let encoded_payload = new_val.0.expect("There is no value");
-					match RequestPayload::decode(&mut &encoded_payload[..]) {
-						Ok(payload) => {
-							log::info!("Decoded payload successful {:?}", payload.job_id);
-							local_storage_compare_and_set(StorageKind::PERSISTENT, master_key, Some(job_key), &new_val.1.expect("There is value"));
-							local_storage_set(StorageKind::PERSISTENT, &payload.job_id, &encoded_payload);
-						}
-						Err(e) => {
-							log::error!("Failed to decode: {:?}", e);
-						}
-					};
 				}
 			}
 			match Self::ocw_do_handling_result(&result_key) {
@@ -207,7 +245,7 @@ pub mod pallet {
 							}
 						}
 
-                    }
+					}
 				}
 				Err(e) => {}
 			}
@@ -334,9 +372,49 @@ pub mod pallet {
 		}
 		#[pallet::call_index(3)]
 		#[pallet::weight(0)]
-		pub fn submit_result_unsiged(origin: OriginFor<T>, block_number: BlockNumberFor<T>, mut key: Vec<u8>, value : Vec<u8>) -> DispatchResult {
+		pub fn submit_result_unsiged(origin: OriginFor<T>, block_number: BlockNumberFor<T>, key: T::Hash, value : Vec<u8>) -> DispatchResult {
 			ensure_none(origin)?;
 
+			if let Some(val) = JobQueue::<T>::get(key) {
+				if val.state != JobState::Finish {
+					return Err(Error::<T>::InvalidOperation.into());
+				}
+				let payload = SignedScriptResult {
+					// signature: (),
+					result_data: BoundedVec::try_from(value).map_err(|_| Error::<T>::SizeTooBig)?,
+					// public: (),
+				};
+				match ScriptResult::<T>::get(key) {
+					None => {
+						let mut list : BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition> = BoundedVec::new();
+						let _ = list.try_push(payload);
+						ScriptResult::<T>::insert(key, list);
+					}
+					Some(existing_list) => {
+						let mut list : BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition>= existing_list;
+						let _ = list.try_push(payload);
+						ScriptResult::<T>::insert(&key, list);
+					}
+				}
+			}
+			Ok(())
+		}
+		#[pallet::call_index(4)]
+		#[pallet::weight(0)]
+		pub fn get_collators_lts(origin: OriginFor<T>) -> DispatchResult {
+			let who = ensure_signed(origin)?;
+			let maybe_author = PalletAuthorship::Pallet::<T>::author();
+			let acc = PalletCollators::Pallet::<T>::account_id();
+			log::info!("Acc {:?}", acc);
+			let mut result = Vec::new();
+			let collators = PalletCollators::pallet::Invulnerables::<T>::get();
+			for collator in collators.iter() {
+
+				result.push(collator.clone());
+			}
+			Self::deposit_event(Event::<T>::Test {
+				key: result,
+			});
 			Ok(())
 		}
 	}
@@ -346,9 +424,13 @@ pub mod pallet {
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			if let Call::change_job_state {block_number,key} = call {
 				Self::validate_unsiged_transaction(block_number, key)
-			} else {
+			} else if let Call::submit_result_unsiged { block_number,key, .. } = call {
+				Self::validate_unsiged_transaction(block_number, key)
+			}
+			else {
 				InvalidTransaction::Call.into()
 			}
+
 		}
 	}
 }
@@ -361,55 +443,15 @@ struct OCWState<T : Config > {
 	start_at_time: u64,
 	script: Vec<u8>,
 }
-
 #[derive(Encode, Decode, Clone, PartialEq, Eq, Debug)]
-struct MetaWasmStore {
-	key_list: BTreeMap<Vec<u8>, Vec<Vec<u8>>>,
-	job_list : BTreeMap<Vec<u8>,Vec<u8>>
-}
-
-impl<T : Config> From<OCWState<T>> for Vec<u8> {
-	fn from(state: OCWState<T>) -> Self {
-		state.encode()
-	}
-}
-
-
-
-impl MetaWasmStore {
-	fn add_to_list(&mut self, key: &[u8],val: &[u8]){
-		match self.key_list.get(key) {
-			None => {
-				let mut key_list = Vec::new();
-				key_list.push(val.to_vec());
-				self.key_list.insert(key.to_vec(),key_list);
-			}
-			Some(_) => {}
-		}
-	}
-	fn update_key_list(&mut self, key: &[u8], new_val:&[u8]){
-		match self.key_list.get_mut(key) {
-			None => {}
-			Some(val) => {
-				val.push(new_val.to_vec());
-			}
-		}
-	}
-	fn remove_key_from_key_list(&mut self, key: &[u8], val_to_remove:&[u8]){
-		match self.key_list.get_mut(key) {
-			None => {}
-			Some(val) => {
-				val.retain(|ele| *ele != val_to_remove.to_vec());
-			}
-		}
-	}
-	fn delete_key(&mut self, key: &[u8]){
-		match self.key_list.get(key) {
-			None => {}
-			Some(_) => {
-				self.key_list.remove_entry(key);
-			}
-		}
+pub enum Command {
+	None,
+	RequestData {
+		key_list : Vec<u8>,
+		data : Vec<u8>
+	},
+	ResultData {
+		result_list : Vec<Vec<u8>>,
 	}
 }
 
@@ -425,6 +467,17 @@ impl<T: Config> Pallet<T> {
 	fn ocw_do_change_job_state(key: T::Hash) -> Result<(), &'static str> {
 		let block_number = system::Pallet::<T>::block_number();
 		let call = Call::change_job_state {block_number,key };
+		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
+			.map_err(|()| "Unable to submit unsigned transaction.")?;
+		Self::deposit_event(Event::<T>::UnsignedTx {
+			when: block_number
+		});
+		Ok(())
+	}
+
+	fn ocw_do_submit_result(key : T::Hash, value : Vec<u8>) -> Result<(), &'static str> {
+		let block_number = system::Pallet::<T>::block_number();
+		let call = Call::submit_result_unsiged {block_number,key, value};
 		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
 			.map_err(|()| "Unable to submit unsigned transaction.")?;
 		Self::deposit_event(Event::<T>::UnsignedTx {
@@ -516,7 +569,7 @@ impl<T: Config> Pallet<T> {
 		}
 	}
 
-	fn ocw_do_handling_job(params: &[u8]) -> Result<(Option<Vec<u8>>,Option<Vec<u8>>), WasmStoreErr> {
+	fn ocw_do_handling_job(params: &[u8]) -> Result<Command, WasmStoreErr> {
 		log::info!("WASMSTORE: job handler running. Local value is {:?}", params);
 		let mut response = RequestPayload::default();
 		for (job_id, mut job) in JobQueue::<T>::iter() {
@@ -541,15 +594,25 @@ impl<T: Config> Pallet<T> {
 						}
 						Err(e) => {log::error!("ERROR: Value not exist, msg: {}", e)}
 					}
-
-					Ok((Some(response.encode()),Some(key_list)))
+					Ok(Command::RequestData {
+						key_list,
+						data : response.encode()
+					})
+				}
+				JobState::Finish => {
+					log::info!("Found finished job");
+					let mut result_key_list = Vec::new();
+					result_key_list.push(job_id.encode());
+					Ok(Command::ResultData {
+						result_list: result_key_list,
+					})
 				}
 				_ => {
 					continue
 				}
 			}
 		}
-		Ok((None,None))
+		Ok(Command::None)
 	}
 
 	fn ocw_do_handling_result(params : &[u8]) -> Result<Vec<Vec<u8>>, WasmStoreErr>{
@@ -574,14 +637,12 @@ impl<T: Config> Pallet<T> {
 		if key.is_clear() {
 			return InvalidTransaction::BadProof.into();
 		}
-
 		ValidTransaction::with_tag_prefix("WasmstoreJobWorker")
 			.priority(T::UnsignedPriority::get())
 			.longevity(5)
 			.propagate(true)
 			.build()
 	}
-
 }
 
 #[cfg(test)]
@@ -589,4 +650,3 @@ mod mock;
 
 #[cfg(test)]
 mod tests;
-

@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ScriptExecutor"
+version = "0.1.0"
+
+[[package]]
 name = "ac-compose-macros"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2356,6 +2360,7 @@ dependencies = [
  "frame-system",
  "lite-json",
  "log",
+ "pallet-balances",
  "parity-scale-codec",
  "scale-info",
  "sp-core",
@@ -7800,6 +7805,7 @@ dependencies = [
  "sc-client-db",
  "sc-consensus",
  "sc-executor",
+ "sc-keystore",
  "sc-network",
  "sc-network-sync",
  "sc-offchain",
@@ -7863,6 +7869,7 @@ dependencies = [
  "pallet-message-queue",
  "pallet-parachain-template",
  "pallet-session",
+ "pallet-staking",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",
@@ -14984,13 +14991,16 @@ dependencies = [
 name = "wasmstore-pallet"
 version = "0.1.0"
 dependencies = [
- "bytes",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
  "lite-json",
  "log",
  "model",
+ "pallet-authorship",
+ "pallet-balances",
+ "pallet-collator-selection",
+ "pallet-session",
  "parity-scale-codec",
  "scale-info",
  "sp-core",

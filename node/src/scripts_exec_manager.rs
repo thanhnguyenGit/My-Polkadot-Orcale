@@ -3,10 +3,12 @@ use std::{sync::Arc, time::Duration};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 use std::thread::sleep;
 use codec::{decode_vec_with_len, Decode, Encode, Error, MaxEncodedLen};
 use frame_benchmarking::__private::storage::bounded_vec::BoundedVec;
 use frame_benchmarking::__private::traits::tasks::__private::TypeInfo;
+use frame_benchmarking::benchmarking::current_time;
 use futures::FutureExt;
 use jsonrpsee::tokio::sync::mpsc;
 use jsonrpsee::tokio::time::{sleep_until, Instant};
@@ -24,13 +26,20 @@ use parachain_template_runtime::{
 use substrate_api_client::api::api_client::Api;
 use sc_client_db::offchain;
 use sp_io::misc::print_num;
-use sp_runtime::print;
+use sp_runtime::{print, KeyTypeId};
+use sc_keystore::LocalKeystore;
+use sp_core::crypto::key_types;
+use sp_core::ecdsa::Public;
+use sp_keystore::{Keystore, KeystorePtr};
+
 // local import
 use model::wasm_compatiable::{JobState, RequestPayload, ResponePayload};
 
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore_jobs_executor";
 const WASMSTORE_RESULT_LIST: &[u8] = b"wasmstore_jobs_result";
+
+const CHARLIES_KEYSTORE_PATH : &str = "/tmp/zombie-3d89086b232a9b7a9448c265be86af6d_-27920-gm7XFZMCV1bS/charlie/data/chains/custom/keystore";
 #[derive(Debug)]
 enum StorageError {
     FailToWrite,
@@ -84,12 +93,36 @@ impl JobPool {
     }
 }
 
+pub fn check_keystore(keystore: Arc<dyn Keystore>) {
+    const KEY_TYPE_BABE: KeyTypeId = KeyTypeId(*b"babe");
+
+    // Retrieve BABE session keys for Alice
+    let public_keys = keystore
+        .sr25519_public_keys(KEY_TYPE_BABE);
+
+    if public_keys.len() == 0 {
+        println!("BRUH");
+    }
+    for pk in public_keys.iter() {
+        println!("BRUH: {:?}",pk.as_array_ref());
+    }
+}
+
+// fn local_key_store() {
+//     let keytstore = LocalKeystore::in_memory();
+//     let charlie_pub = "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y";
+//     match keytstore.key_pair::<Pair>(charlie_pub) {
+
+//     }
+// }
+
 pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<Block>>) {
     let group = "OffChainService";
     let mut offchain_db = backend.offchain_storage().expect("No storage found");
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_RESULT_LIST, b"init");
     let executor = Arc::new(task_manager.spawn_handle());
+
 
     let (job_tx,job_rx) = mpsc::channel::<JobResult>(20);
     let mut job_pool = JobPool::new(job_rx);
@@ -110,7 +143,7 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                         // clear the key_list in K-V
                         let _ = write_to_offchain_db(backend.clone(), WASMSTORE_KEY_LIST, b"init").await;
                         // Iter over key_list to assigned job to spawned task.
-                        for (index,i) in key_list.iter().enumerate() {
+                        for (_,i) in key_list.iter().enumerate() {
                             let task_backend = backend.clone();
                             let value = i.clone();
                             let tx = job_tx.clone();
@@ -135,7 +168,6 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                                         Err(e) => {
                                             eprintln!("{:?} - msg: Failed to decode payload", e);
                                         }
-
                                     }
                                 }
                             })
@@ -146,7 +178,6 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                     }
                 }
             }
-
             sleep_until(Instant::now() + Duration::from_millis(1000)).await;
         }
     });
