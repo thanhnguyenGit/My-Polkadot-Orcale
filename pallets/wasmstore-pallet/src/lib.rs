@@ -108,6 +108,7 @@ pub mod pallet {
 		publisher: T::AccountId,
 		block_number: BlockNumberFor<T>,
 		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
+		pub(crate) wasm_abi: BoundedVec<u8, T::MaxScriptSize>,
 		hash: T::Hash,
 		name: BoundedVec<u8,T::MaxStringSize>,
 		typ : Type,
@@ -122,6 +123,7 @@ pub mod pallet {
 		pub(crate) caller : T::AccountId,
 		pub(crate) script_name : BoundedVec<u8,T::MaxStringSize>,
 		pub(crate) wasm_code: BoundedVec<u8, T::MaxScriptSize>,
+		pub(crate) wasm_abi: BoundedVec<u8, T::MaxScriptSize>,
 		pub(crate) state: JobState,
 	}
 
@@ -256,7 +258,7 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		#[pallet::call_index(0)]
 		#[pallet::weight(0)]
-		pub fn upload_wasm(origin: OriginFor<T>, mut name : String, typ: Type, wasm_code: Vec<u8>) -> DispatchResult {
+		pub fn upload_wasm(origin: OriginFor<T>, mut name : String, typ: Type, wasm_code: Vec<u8>, script_abi: Vec<u8>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			name = match typ {
 				Type::Executable => format!("EXE{}", name.as_str()),
@@ -273,6 +275,8 @@ pub mod pallet {
 			let bounded_wasm_code = BoundedVec::try_from(wasm_code.clone()).map_err(|_| Error::<T>::SizeTooBig)?;
 			let bounded_name = BoundedVec::try_from(name.into_bytes()).map_err(|_|Error::<T>::SizeTooBig)?;
 			let bounded_wasm_code_size = bounded_wasm_code.len() as u64;
+
+			let bounded_wasm_abi = BoundedVec::try_from(script_abi.clone()).map_err(|_| Error::<T>::SizeTooBig)?;
 
 			let script_key = {
 				let key = format!("{:?}",name_clone.as_str()).encode();
@@ -297,6 +301,7 @@ pub mod pallet {
 				ref_count : 0,
 				hash: code_hash,
 				wasm_code: bounded_wasm_code,
+				wasm_abi: bounded_wasm_abi,
 			};
 
 			<ScriptStorage<T>>::insert(&script_key, script_detail);
@@ -312,7 +317,7 @@ pub mod pallet {
 		}
 		#[pallet::call_index(1)]
 		#[pallet::weight(0)]
-		pub fn request_script_execution(origin: OriginFor<T>, script_name : String) -> DispatchResult {
+		pub fn request_script_execution(origin: OriginFor<T>, script_name : String, params: Option<String>) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			let script_key = {
 				let key = format!("{:?}",script_name.as_str()).encode();
@@ -332,6 +337,7 @@ pub mod pallet {
 						caller: who.clone(),
 						script_name: name,
 						wasm_code: val.wasm_code,
+						wasm_abi: val.wasm_abi,
 						state: JobState::Pending,
 					};
 					let script_key_hash = T::Hashing::hash(&job.encode());
@@ -588,6 +594,7 @@ impl<T: Config> Pallet<T> {
 							response = RequestPayload {
 								job_id : job_id.encode(),
 								job_content: job.wasm_code.to_vec(),
+								content_abi: job.wasm_abi.to_vec(),
 								job_state: job.state,
 							};
 							log::info!("Payload detail: job_id - {:?}, state: {:?}", response.job_id,response.job_state);

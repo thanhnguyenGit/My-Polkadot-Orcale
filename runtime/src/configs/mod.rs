@@ -41,14 +41,14 @@ use frame_support::{
 	weights::{ConstantMultiplier, Weight},
 	PalletId,
 };
+use frame_support::traits::fungible::conformance_tests::regular::balanced::deposit;
+use frame_support::traits::LockIdentifier;
 use frame_system::{limits::{BlockLength, BlockWeights}, CheckGenesis, CheckMortality, CheckNonZeroSender, CheckNonce, CheckSpecVersion, CheckTxVersion, CheckWeight, EnsureRoot};
 use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendTransactionTypes, SigningTypes};
 use pallet_xcm::{EnsureXcm, IsVoiceOfBody};
 use parachains_common::message_queue::{NarrowOriginToSibling, ParaIdToSibling};
-
-use polkadot_runtime_common::{
-	xcm_sender::NoPriceForMessageDelivery, BlockHashCount, SlowAdjustingFeeUpdate,
-};
+use parachains_common::MINUTES;
+use polkadot_runtime_common::{prod_or_fast, xcm_sender::NoPriceForMessageDelivery, BlockHashCount, CurrencyToVote, SlowAdjustingFeeUpdate};
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::Get;
 use sp_runtime::{generic, OpaqueExtrinsic, Perbill, SaturatedConversion};
@@ -56,10 +56,10 @@ use sp_runtime::generic::SignedPayload;
 use sp_runtime::traits::{Extrinsic, SignaturePayload};
 use sp_version::RuntimeVersion;
 use xcm::latest::prelude::BodyId;
+use ocw_pallet::Call;
 // Local module imports
 use super::{weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight}, AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys, Signature, SignedExtra, System, UncheckedExtrinsic, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION};
 use xcm_config::{RelayLocation, XcmOriginToTransactDispatchOrigin};
-
 use super::OriginCaller;
 
 parameter_types! {
@@ -319,19 +319,14 @@ impl pallet_utility::Config for Runtime {
 parameter_types! {
 	pub const MinStakeAmount: u32 = 1;
 }
-//
-// impl custom_pallet::Config for Runtime {
-//     type RuntimeEvent = RuntimeEvent;
-//
-// 	type WeightInfo = custom_pallet::weights::SubstrateWeight<Runtime>;
-// 	type MinStakeAmount = MinStakeAmount;
-// }
 
 parameter_types! {
 	pub const GracePeriod: BlockNumber = 3;
 	pub const UnsignedInterval: BlockNumber = 3;
 	pub const UnsignedPriority: BlockNumber = 3;
 	pub const MaxPrices: u32 = 500;
+	pub const MyPalletId : PalletId = PalletId(*b"stk_proc");
+	pub const MaxNomiators: u32 = 16;
 }
 
 impl CreateSignedTransaction<ocw_pallet::Call<Self>> for Runtime {
@@ -383,13 +378,48 @@ impl SendTransactionTypes<ocw_pallet::Call<Self>> for Runtime {
 impl ocw_pallet::Config for Runtime {
 	type AuthorityId = ocw_pallet::crypto::TestAuthId;
 	type RuntimeEvent = RuntimeEvent;
+	type MyPalletId = MyPalletId;
 	type GracePeriod = GracePeriod;
 	type UnsignedInterval = UnsignedInterval;
 	type UnsignedPriority = UnsignedPriority;
 	type MaxPrices = MaxPrices;
 	type MinStakeAmount = MinStakeAmount;
+	type MaxNomiators = MaxNomiators;
 }
 
+// parameter_types! {
+// 	pub const ElectionPalletId : PalletId = PalletId(*b"my_elect");
+// 	pub const DesiredMembers: u32 = 10;
+// 	pub const DesiredRunnersUp:u32 = 10;
+// 	pub const MaxVoters: u32 = 10 * 1000;
+// 	pub const MaxVotesPerVoter: u32 = 16;
+// 	pub const TermDuration: BlockNumber = prod_or_fast!(24 * HOURS, 2 * MINUTES, "MOC_TERM_DURATION");
+// 	pub const MaxCandidates: u32 = 1000;
+// 	pub const CandidacyBond: Balance = MICRO_UNIT;
+// 	pub const VotingBondBase: Balance = MICRO_UNIT;
+// 	pub const VotingBondFactor: Balance = MICRO_UNIT;
+// }
+//
+// impl pallet_elections_phragmen::Config for Runtime {
+// 	type RuntimeEvent = RuntimeEvent;
+// 	type PalletId = ElectionPalletId;
+// 	type Currency = Balances;
+// 	type ChangeMembers = ();
+// 	type InitializeMembers = ();
+// 	type CurrencyToVote = polkadot_runtime_common::CurrencyToVote;
+// 	type CandidacyBond = CandidacyBond;
+// 	type VotingBondBase = VotingBondBase;
+// 	type VotingBondFactor = VotingBondFactor;
+// 	type LoserCandidate = ();
+// 	type KickedMember = ();
+// 	type DesiredMembers = DesiredMembers;
+// 	type DesiredRunnersUp = ();
+// 	type TermDuration = TermDuration;
+// 	type MaxCandidates = MaxCandidates;
+// 	type MaxVoters = MaxVoters;
+// 	type MaxVotesPerVoter = ();
+// 	type WeightInfo = pallet_elections_phragmen::weights::SubstrateWeight<Runtime>;
+// }
 
 parameter_types! {
 	// Unsigned Config

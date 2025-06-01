@@ -47,9 +47,9 @@ use sp_core::offchain::OffchainStorage;
 use sp_io::misc::print_num;
 use sp_keystore::KeystorePtr;
 use sp_core::crypto::{ByteArray, CryptoTypeId, KeyTypeId};
-
+use sp_core::sr25519::Public;
 //local project import
-use super::scripts_exec_manager::{run_executor,check_keystore};
+use super::scripts_exec_manager::{run_executor};
 
 #[docify::export(wasm_executor)]
 type ParachainExecutor = WasmExecutor<ParachainHostFunctions>;
@@ -132,17 +132,6 @@ pub fn new_partial(config: &Configuration) -> Result<Service, sc_service::Error>
 		telemetry.as_ref().map(|telemetry| telemetry.handle()),
 		&task_manager,
 	);
-
-	check_keystore(keystore_container.keystore().clone());
-	let keystore = keystore_container.keystore();
-	if config.offchain_worker.enabled {
-		log::info!("offchain worker enabled");
-		Keystore::sr25519_generate_new(
-			&*keystore,
-			ocw_pallet::KEY_TYPE,
-			Some("//Alice")
-		).expect("Creating key with account Alice shoudl succed.");
-	}
 
 	Ok(PartialComponents {
 		backend,
@@ -340,6 +329,32 @@ pub async fn start_parachain_node(
 		})
 	};
 
+	// FOR FUTURE USE: this part create a new keypair inside the keystore with K: KEY_TYPE_TST - V: new key pair
+	// Could be usefull for signed payload.
+	//---------------------------------------------------------
+	// pub const KEY_TYPE_TST: KeyTypeId = KeyTypeId(*b"bruh");
+	//
+	// println!("HAPPY");
+	// log::info!("HAPPPPPPPPPPPPPPPPPPPPY");
+	// check_keystore(params.keystore_container.keystore().clone());
+	// let keystore = params.keystore_container.keystore().clone();
+	// match Keystore::sr25519_generate_new(
+	// 	&*keystore,
+	// 	KEY_TYPE_TST,
+	// 	Some("//KYS"),
+	// ) {
+	// 	Ok(val) => {
+	// 		println!("SUCCESS - msg: New public key is {:?}", val);
+	// 		log::debug!("SUCCESS - msg: New public key is {:?}", val);
+	// 		log::info!("SUCCESS - msg: New public key is {:?}", val);
+	// 	}
+	// 	Err(e) => {
+	// 		println!("ERROR: - msg:  {:?}", e);
+	// 		log::debug!("ERROR: - msg:  {:?}", e);
+	// 		log::info!("ERROR: - msg:  {:?}", e);
+	// 		log::error!("ERROR: - msg:  {:?}", e);
+	// 	}
+	// }
 
 	sc_service::spawn_tasks(sc_service::SpawnTasksParams {
 		rpc_builder,
@@ -427,7 +442,7 @@ pub async fn start_parachain_node(
 			announce_block,
 		)?;
 	}
-	run_executor(&mut task_manager,params.backend.clone());
+	run_executor(&mut task_manager,params.backend.clone(),params.keystore_container.keystore().clone());
 
 	start_network.start_network();
 

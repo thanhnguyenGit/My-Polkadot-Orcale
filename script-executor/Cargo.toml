@@ -1,5 +1,5 @@
 [package]
-name = "ScriptExecutor"
+name = "script-executor"
 version = "0.1.0"
 license.workspace = true
 authors.workspace = true
@@ -7,4 +7,23 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
+anyhow = "1.0.94"
+wasmtime = "27.0.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.10"
+clap = { version = "4.0", features = ["derive"] }
+sha2 = "0.10.8"
+hex = "0.4.3"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
+hyper-tls = "0.5"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+wasmparser = {version = "0.200.0"}
+parity-scale-codec = "3.6.12"
+parity-scale-codec-derive = "3.6.12"
+http = "0.2.12"

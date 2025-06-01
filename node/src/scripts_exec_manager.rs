@@ -34,7 +34,7 @@ use sp_keystore::{Keystore, KeystorePtr};
 
 // local import
 use model::wasm_compatiable::{JobState, RequestPayload, ResponePayload};
-
+use script_executor::runtime::abi_reader;
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore_jobs_executor";
 const WASMSTORE_RESULT_LIST: &[u8] = b"wasmstore_jobs_result";
@@ -93,36 +93,24 @@ impl JobPool {
     }
 }
 
-pub fn check_keystore(keystore: Arc<dyn Keystore>) {
-    const KEY_TYPE_BABE: KeyTypeId = KeyTypeId(*b"babe");
+fn check_keystore(keystore: Arc<dyn Keystore>) {
+    const KEY_TYPE_BABE: KeyTypeId = KeyTypeId(*b"aura");
 
-    // Retrieve BABE session keys for Alice
+    // Retrieve BABE session keys for underlying collator
     let public_keys = keystore
         .sr25519_public_keys(KEY_TYPE_BABE);
-
-    if public_keys.len() == 0 {
-        println!("BRUH");
-    }
-    for pk in public_keys.iter() {
-        println!("BRUH: {:?}",pk.as_array_ref());
-    }
+    let signed_payload = keystore.sr25519_sign(KEY_TYPE_BABE, &public_keys[0], "BRIv".as_ref());
+    let x = signed_payload.unwrap().unwrap().0;
 }
 
-// fn local_key_store() {
-//     let keytstore = LocalKeystore::in_memory();
-//     let charlie_pub = "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y";
-//     match keytstore.key_pair::<Pair>(charlie_pub) {
-
-//     }
-// }
-
-pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<Block>>) {
+pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<Block>>,keystore: Arc<dyn Keystore>) {
     let group = "OffChainService";
     let mut offchain_db = backend.offchain_storage().expect("No storage found");
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_KEY_LIST, b"init");
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_RESULT_LIST, b"init");
     let executor = Arc::new(task_manager.spawn_handle());
 
+    check_keystore(keystore.clone());
 
     let (job_tx,job_rx) = mpsc::channel::<JobResult>(20);
     let mut job_pool = JobPool::new(job_rx);
@@ -154,7 +142,8 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
                                     match RequestPayload::decode(&mut &res[..]) {
                                         Ok(payload) => {
                                             println!("Payload Job id: {:?}", payload.job_id);
-                                            let _ = match process_wasm(&payload.job_content, &payload.job_id).await {
+                                            let abi = String::from_utf8(payload.content_abi).expect("Invalid UTF-8");
+                                            let _ = match process_wasm(&payload.job_content,abi,&payload.job_id).await {
                                                 Ok(res) => {
                                                     let _ = tx.send(res).await;
                                                     Ok(())
@@ -214,13 +203,16 @@ async fn write_to_offchain_db(backend: Arc<TFullBackend<Block>>, key: &[u8], new
     }
 }
 
-async fn process_wasm(wasm_code : &[u8], job_id: &[u8]) -> Result<JobResult, StorageError> {
-    let result_from_wasm = b"some result idk, idc";
+async fn process_wasm(wasm_code : &[u8], wasm_abi : String, job_id: &[u8]) -> Result<JobResult, StorageError> {
+    // let result_from_wasm = b"some result idk, idc";
     // Mock processing time
-    sleep_until(Instant::now() + Duration::from_millis(1000)).await;
+    let res = abi_reader(&wasm_abi, wasm_code)
+        .await
+        .expect("Shoudl work bruv");
+    // sleep_until(Instant::now() + Duration::from_millis(1000)).await;
     let result = JobResult {
         job_id: job_id.to_vec(),
-        result: result_from_wasm.to_vec(),
+        result: res,
     };
     Ok(result)
 }

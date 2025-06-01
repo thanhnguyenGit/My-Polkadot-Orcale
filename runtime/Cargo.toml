@@ -80,6 +80,7 @@ ocw-pallet.workspace = true
 offchain-worker.workspace = true
 wasmstore-pallet.workspace = true
 pallet-staking.workspace = true
+pallet-elections-phragmen.workspace = true
 [features]
 default = ["std"]
 std = [

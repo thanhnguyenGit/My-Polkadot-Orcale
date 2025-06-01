@@ -26,18 +26,24 @@ chain_spec_path = "./chain_spec.json"
 
 [[parachains.collators]]
 name = "dave"
-#command = "./target/release/parachain-template-node"
-command = "polkadot-omni-node"
+command = "./target/release/parachain-template-node"
 ws_port = 9935
 rpc_port = 8833
 port = 30335
-args = ["--collator", "--dave","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
+args = ["--collator","--dave","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
 
 [[parachains.collators]]
 name = "charlie"
-#command = "./target/release/parachain-template-node"
-command = "polkadot-omni-node"
+command = "./target/release/parachain-template-node"
 ws_port = 9822
 rpc_port = 8834
 port = 30336
 args = ["--collator", "--charlie","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
+
+[[parachains.collators]]
+name = "eve"
+command = "./target/release/parachain-template-node"
+ws_port = 9836
+rpc_port = 8835
+port = 30337
+args = ["--collator", "--eve","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]

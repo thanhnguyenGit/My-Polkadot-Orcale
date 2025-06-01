@@ -27,8 +27,9 @@ use sp_core::hexdisplay::AsBytesRef;
 use sp_core::offchain::{StorageKind, Timestamp};
 use sp_io::offchain::{timestamp, local_storage_clear, local_storage_get, local_storage_set, local_storage_compare_and_set,sleep_until};
 use sp_runtime::offchain::storage_lock::{BlockAndTime, StorageLock};
-use sp_runtime::traits::{BlockNumberProvider, Hash};
+use sp_runtime::traits::{AccountIdConversion, BlockNumberProvider, Hash};
 use sp_runtime::format;
+use sp_std::marker::PhantomData;
 /// Defines application identifier for crypto keys of this module.
 ///
 /// Every module that deals with signatures needs to declare its unique identifier for
@@ -74,27 +75,25 @@ pub mod crypto {
 pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
-    use frame_support::traits::{
-        dynamic_params::IntoKey,
-        Currency,
-        LockableCurrency,
-        ReservableCurrency
-    };
-    use pallet_balances as PalletBalances;
+    use frame_support::traits::{dynamic_params::IntoKey, Currency, Imbalance, LockableCurrency, ReservableCurrency};
     use frame_support::pallet_prelude::*;
-    use sp_runtime::traits::{ensure_pow, BlockNumber};
+    use frame_support::PalletId;
+    use sp_runtime::traits::{ensure_pow, AccountIdConversion, BlockNumber, Bounded, CheckedConversion};
+    use sp_runtime::DispatchResultWithInfo;
+    use pallet_balances as PalletBalances;
+    use pallet_treasury as PalletTreasury;
+    use pallet_elections_phragmen as PalletElection;
+
     #[pallet::pallet]
     // #[pallet::generate_store(pub(super) trait Store)]
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_balances::Config{
-        /*
-            The identifier type for an offchain worker.
-            Use for when using OCW to make a sigened transaction
-         */
+    pub trait Config: CreateSignedTransaction<Call<Self>> + frame_system::Config + pallet_balances::Config + pallet_elections_phragmen::Config {
         type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+        type MyPalletId : Get<PalletId>;
 
         // Configuration parameters
         #[pallet::constant]
@@ -108,6 +107,30 @@ pub mod pallet {
         type MaxPrices: Get<u32>;
         #[pallet::constant]
         type MinStakeAmount : Get<u32>;
+        #[pallet::constant]
+        type MaxNomiators: Get<u32>;
+    }
+
+    #[pallet::genesis_config]
+    #[derive(frame_support::DefaultNoBound)]
+    pub struct GenesisConfig<T: Config> {
+        #[serde(skip)]
+        _phantom: PhantomData<T>
+    }
+
+    #[pallet::genesis_build]
+    impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+        fn build(&self) {
+            log::info!("Genesis work");
+            let treasury_acc : T::AccountId = T::MyPalletId::get().into_account_truncating();
+            log::info!("Staked Processor treasury account: {:?}", treasury_acc);
+            log::debug!("Staked Processor treasury account: {:?}", treasury_acc);
+
+            let min = PalletBalances::Pallet::<T>::minimum_balance();
+            if PalletBalances::Pallet::<T>::free_balance(&treasury_acc).lt(&min) {
+                PalletBalances::Pallet::<T>::make_free_balance_be(&treasury_acc, min);
+            }
+        }
     }
 
 
@@ -135,15 +158,11 @@ pub mod pallet {
     )]
     #[scale_info(skip_type_params(T))]
     pub struct Meta<T: Config> {
-        pub(crate) balance: T::Balance,
+        pub(crate) total_stake: T::Balance,
         pub(crate) credit_score: u32,
+        pub(crate) nominators: BoundedBTreeSet<(T::AccountId,T::Balance), T::MaxNomiators>,
     }
 
-    /// Defines the block when next unsigned transaction will be accepted.
-    ///
-    /// To prevent spam of unsigned (and unpayed!) transactions on the network,
-    /// we only allow one transaction every `T::UnsignedInterval` blocks.
-    /// This storage entry defines when new transaction is going to be accepted.
     #[pallet::storage]
     #[pallet::getter(fn next_unsigned_at)]
     pub(super) type NextUnsignedAt<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
@@ -165,6 +184,18 @@ pub mod pallet {
             who: T::AccountId,
             amount: T::Balance
         },
+        ProcessorRemove {
+            who: T::AccountId,
+        },
+        SlashEvent {
+            who: T::AccountId,
+            slash_amount: T::Balance,
+            remaining_reserved: T::Balance,
+        },
+        TreasuryAcc {
+            who: T::AccountId,
+            free: T::Balance,
+        }
     }
 
     #[pallet::error]
@@ -175,6 +206,8 @@ pub mod pallet {
         HashingProblem,
         InsufficientFund,
         AlreadyStaked,
+        NonExisted,
+        Duplicated,
     }
     pub const OCW_STORAGE_KEY : &[u8] = b"ocw-worker";
     pub const LOCK_BLOCK_EXPIRATION: u32 = 3;
@@ -218,16 +251,17 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::weight(Weight::from_parts(10_000, 0) + T::DbWeight::get().writes(1))]
-        pub fn stake(origin: OriginFor<T>, stake_amount: T::Balance) -> DispatchResult {
+        pub fn stake(origin: OriginFor<T>, stake_amount: T::Balance) -> DispatchResultWithPostInfo {
             let who = ensure_signed(origin)?;
             ensure!(!StakedProcessors::<T>::contains_key(&who), Error::<T>::AlreadyStaked);
-            ensure!(stake_amount >= T::MinStakeAmount::get().into(), Error::<T>::InsufficientFund);
+            ensure!(stake_amount < T::MinStakeAmount::get().into(), Error::<T>::InsufficientFund);
             match PalletBalances::Pallet::<T>::reserve(&who, stake_amount) {
                 Ok(_) => {
                     log::info!("SUCCESS - msg: Reserve: {:?} succesfull for {:?}", stake_amount,who);
                     let meta = Meta::<T> {
-                        balance: stake_amount,
-                        credit_score: 100
+                        total_stake: stake_amount,
+                        credit_score: 80,
+                        nominators: BoundedBTreeSet::new()
                     };
                     StakedProcessors::<T>::insert(&who, meta);
                     Self::deposit_event(Event::<T>::ProcessorStaked {
@@ -239,6 +273,70 @@ pub mod pallet {
                     log::error!("{:?} - msg: Faild to reverse for {:?}",e,who)
                 }
             }
+            Ok(().into())
+        }
+        #[pallet::weight(Weight::from_parts(10_000, 0) + T::DbWeight::get().writes(1))]
+        pub fn un_stake(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
+            let who = ensure_signed(origin)?;
+            match StakedProcessors::<T>::get(&who) {
+                None => {
+                    return Err(Error::<T>::NonExisted.into());
+                }
+                Some(val) => {
+                    let current_reserved = PalletBalances::Pallet::<T>::reserved_balance(&who);
+                    PalletBalances::Pallet::<T>::unreserve(&who, current_reserved);
+                    StakedProcessors::<T>::remove(&who);
+                    Self::deposit_event(Event::<T>::ProcessorRemove {
+                        who
+                    });
+                }
+            }
+            Ok(().into())
+        }
+        // #[pallet::weight(Weight::from_parts(10_000, 0) + T::DbWeight::get().writes(1))]
+        // pub fn nominate(origin : OriginFor<T>, target: T::AccountId, amount: T::Balance) -> DispatchResultWithPostInfo {
+        //     let who = ensure_signed(origin)?;
+        //     ensure!(!StakedProcessors::<T>::contains_key(&target), Error::<T>::NonExisted);
+        //     ensure!(amount < T::MinStakeAmount::get().into(), Error::<T>::InsufficientFund);
+        //     StakedProcessors::<T>::try_mutate(&target, |meta| {
+        //         if let Some(val) = meta {
+        //             val.no
+        //         }
+        //
+        //     });
+        //     PalletBalances::Pallet::<T>::reserve(&who, amount);
+        //     Ok(().into())
+        // }
+
+        #[pallet::weight(0)]
+        pub fn slash(origin: OriginFor<T>, mock_target: T::AccountId,slash_amount : T::Balance) -> DispatchResultWithPostInfo {
+            let who = ensure_signed(origin)?;
+
+            let current_reserved = PalletBalances::Pallet::<T>::reserved_balance(&who);
+            ensure!(current_reserved.lt(&slash_amount), Error::<T>::InsufficientFund);
+            // ensure!(who.eq(&mock_target),Error::<T>::Duplicated);
+            ensure!(!StakedProcessors::<T>::contains_key(&who),Error::<T>::NonExisted);
+            let acc : T::AccountId = T::MyPalletId::get().into_account_truncating();
+            let (imb,remain) = PalletBalances::Pallet::<T>::slash_reserved(&mock_target, slash_amount);
+            let treasury = Self::get_treasury_account();
+            PalletBalances::Pallet::<T>::resolve_creating(&treasury,imb);
+            Self::deposit_event(Event::<T>::SlashEvent {
+                who : mock_target,
+                slash_amount,
+                remaining_reserved: remain,
+            });
+            Ok(().into())
+        }
+
+        #[pallet::weight(0)]
+        pub fn test_acc(origin: OriginFor<T>) -> DispatchResultWithPostInfo {
+            ensure_signed(origin)?;
+            let who : T::AccountId = T::MyPalletId::get().into_account_truncating();
+            let free = PalletBalances::Pallet::<T>::free_balance(&who);
+            Self::deposit_event(Event::<T>::TreasuryAcc {
+                who,
+                free
+            });
             Ok(().into())
         }
         #[pallet::weight(0)]
@@ -724,6 +822,9 @@ impl<T: Config> Pallet<T> {
     {
         let vec: Vec<u8> = input.into();
         BoundedVec::try_from(vec).map_err(|_| "Input data is too large")
+    }
+    fn get_treasury_account() -> T::AccountId {
+        T::MyPalletId::get().into_account_truncating()
     }
 }
 

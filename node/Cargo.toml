@@ -115,6 +115,7 @@ sc-keystore = {version = "33.0.0", default-features = true}
 # ------------------------------------------------------
 ocw-pallet = {workspace = true,default-features = false}
 model = {path = "../model", default-features = false}
+script-executor = {workspace = true,default-features = false}
 # ------------------------------------------------------
 [build-dependencies]
 substrate-build-script-utils.workspace = true

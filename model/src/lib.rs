@@ -13,6 +13,7 @@ pub mod wasm_compatiable {
     pub struct RequestPayload {
         pub job_id : Vec<u8>,
         pub job_content: Vec<u8>,
+        pub content_abi : Vec<u8>,
         pub job_state: JobState,
     }
     #[derive(Decode,Encode,Clone, PartialEq, Eq, Debug,Default)]
