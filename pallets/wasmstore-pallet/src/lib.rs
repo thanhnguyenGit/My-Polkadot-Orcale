@@ -25,7 +25,7 @@ use sp_std::vec::Vec;
 use sp_std::vec;
 use sp_std::collections::{
 	btree_map::{BTreeMap},
-	btree_set,
+	btree_set::BTreeSet,
 	vec_deque,
 };
 use scale_info::prelude::{
@@ -50,6 +50,7 @@ pub mod pallet {
 	use frame_support::traits::dynamic_params::IntoKey;
 	use frame_system::pallet_prelude::*;
 	use pallet_collator_selection::CandidateList;
+	use sp_core::crypto::AccountId32;
 	use sp_core::Public;
 	use sp_io::offchain::timestamp;
 	use sp_runtime::traits::{CheckedAdd, One, Hash};
@@ -88,7 +89,7 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_script_result)]
-	pub type ScriptResult<T : Config> = StorageMap<_,Blake2_128Concat,T::Hash,BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition>, OptionQuery>;
+	pub type ScriptResult<T : Config> = StorageDoubleMap<_,Blake2_128Concat,T::Hash,Twox64Concat,sp_core::sr25519::Public,SignedScriptResult<T>, OptionQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn get_jobs)]
@@ -128,13 +129,12 @@ pub mod pallet {
 	}
 
 	#[derive(
-		Encode, Decode,MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, Default
+		Encode, Decode,MaxEncodedLen, TypeInfo, CloneNoBound, PartialEqNoBound, DefaultNoBound
 	)]
 	#[scale_info(skip_type_params(T))]
 	pub struct SignedScriptResult<T: Config> {
-		// pub(crate) signature : T::Signature,
 		pub(crate) result_data : BoundedVec<u8,T::MaxResultSize>,
-		// pub(crate) public : T::AccountId,
+		pub(crate) ext_time : u32,
 	}
 
 	#[pallet::event]
@@ -159,7 +159,7 @@ pub mod pallet {
 		Test {
 			key : Vec<T::AccountId>,
 
-		}
+		},
 	}
 
 	#[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
@@ -216,15 +216,29 @@ pub mod pallet {
 							};
 						}
 						Command::ResultData {result_list} => {
-							for key in result_list.iter() {
-								match local_storage_get(StorageKind::PERSISTENT, &key) {
-									None => {}
-									Some(val) => {
-										// let _ = Self::ocw_do_submit_result(key, val);
-										log::info!("Found finished result: {:08x?}", key);
-									}
-								}
-							}
+							// for key in result_list.iter() {
+							// 	match local_storage_get(StorageKind::PERSISTENT, &key) {
+							// 		None => {}
+							// 		Some(val) => {
+							//
+							// 			log::info!("Found finished result: {:08x?}", key);
+							// 			match ResponePayload::decode(&mut &val[..]) {
+							// 				Ok(response) => {
+							// 					Self::ocw_do_submit_result(
+							// 						response.job_id,
+							// 						response.job_result,
+							// 						response.address,
+							// 						response.exe_time
+							// 					).expect("Result Submitted")
+							// 				}
+							// 				Err(e) => {
+							// 					log::error!("Failed to decode: {:?}", e);
+							// 				}
+							// 			}
+							//
+							// 		}
+							// 	}
+							// }
 						}
 					}
 				}
@@ -238,7 +252,14 @@ pub mod pallet {
 							Some(raw_val) => {
 								match ResponePayload::decode(&mut &raw_val[..]) {
 									Ok(res) => {
-										log::info!("Finished Result: K - {:?}, V - {:?}", result_key, res);
+										let decoded_address = sp_core::sr25519::Public::decode(&mut &res.address[..]).ok().expect("Deocode address work");
+										log::info!("Finished Result: K - {:?}, V - {:08x?} ", result_key, decoded_address);
+										Self::ocw_do_submit_result(
+													res.job_id,
+													res.job_result,
+													decoded_address,
+													res.exe_time
+										).expect("Result Submitted")
 									}
 									Err(e) => {
 										log::error!("ERROR: {:?} - msg Failed to decode response",e)
@@ -378,28 +399,38 @@ pub mod pallet {
 		}
 		#[pallet::call_index(3)]
 		#[pallet::weight(0)]
-		pub fn submit_result_unsiged(origin: OriginFor<T>, block_number: BlockNumberFor<T>, key: T::Hash, value : Vec<u8>) -> DispatchResult {
+		pub fn submit_result_unsiged(
+			origin: OriginFor<T>,
+			block_number: BlockNumberFor<T>,
+			key: Vec<u8>,
+			value : Vec<u8>,
+			processor_pub : sp_core::sr25519::Public,
+			ext_time: u32
+		) -> DispatchResult {
 			ensure_none(origin)?;
-
-			if let Some(val) = JobQueue::<T>::get(key) {
+			let onchain_key = T::Hash::decode(&mut &key[..]).ok().expect("DEcode hash work baby");
+			if let Some(val) = JobQueue::<T>::get(onchain_key) {
 				if val.state != JobState::Finish {
 					return Err(Error::<T>::InvalidOperation.into());
 				}
-				let payload = SignedScriptResult {
-					// signature: (),
-					result_data: BoundedVec::try_from(value).map_err(|_| Error::<T>::SizeTooBig)?,
-					// public: (),
-				};
-				match ScriptResult::<T>::get(key) {
+
+				match ScriptResult::<T>::get(onchain_key, processor_pub) {
 					None => {
-						let mut list : BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition> = BoundedVec::new();
-						let _ = list.try_push(payload);
-						ScriptResult::<T>::insert(key, list);
+						let payload = SignedScriptResult {
+							result_data: BoundedVec::try_from(value).map_err(|_| Error::<T>::SizeTooBig)?,
+							ext_time,
+						};
+						log::info!("Payload: {:?}", payload.result_data);
+						ScriptResult::<T>::insert(&onchain_key, &processor_pub,payload);
 					}
-					Some(existing_list) => {
-						let mut list : BoundedVec<SignedScriptResult<T>,T::MaxResultSubmition>= existing_list;
-						let _ = list.try_push(payload);
-						ScriptResult::<T>::insert(&key, list);
+					Some(_) => {
+						ScriptResult::<T>::mutate(&onchain_key, &processor_pub, |current_val| {
+							if let Some(val) = current_val {
+								val.result_data = BoundedVec::try_from(value).map_err(|_| Error::<T>::SizeTooBig).expect("Oversize");
+								val.ext_time = ext_time;
+								log::info!("New Payload: {:?}", val.result_data);
+							}
+						});
 					}
 				}
 			}
@@ -431,7 +462,9 @@ pub mod pallet {
 			if let Call::change_job_state {block_number,key} = call {
 				Self::validate_unsiged_transaction(block_number, key)
 			} else if let Call::submit_result_unsiged { block_number,key, .. } = call {
-				Self::validate_unsiged_transaction(block_number, key)
+				let onchain_key = T::Hash::decode(&mut &key[..]).ok().expect("DEcode hash work baby");
+
+				Self::validate_unsiged_transaction(block_number, &onchain_key)
 			}
 			else {
 				InvalidTransaction::Call.into()
@@ -457,7 +490,7 @@ pub enum Command {
 		data : Vec<u8>
 	},
 	ResultData {
-		result_list : Vec<Vec<u8>>,
+		result_list : BTreeSet<Vec<u8>>,
 	}
 }
 
@@ -481,9 +514,14 @@ impl<T: Config> Pallet<T> {
 		Ok(())
 	}
 
-	fn ocw_do_submit_result(key : T::Hash, value : Vec<u8>) -> Result<(), &'static str> {
+	fn ocw_do_submit_result(
+		key : Vec<u8>,
+		value : Vec<u8>,
+		processor_pub : sp_core::sr25519::Public,
+		ext_time : u32
+	) -> Result<(), &'static str> {
 		let block_number = system::Pallet::<T>::block_number();
-		let call = Call::submit_result_unsiged {block_number,key, value};
+		let call = Call::submit_result_unsiged {block_number,key, value, processor_pub,ext_time};
 		SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into())
 			.map_err(|()| "Unable to submit unsigned transaction.")?;
 		Self::deposit_event(Event::<T>::UnsignedTx {
@@ -608,8 +646,8 @@ impl<T: Config> Pallet<T> {
 				}
 				JobState::Finish => {
 					log::info!("Found finished job");
-					let mut result_key_list = Vec::new();
-					result_key_list.push(job_id.encode());
+					let mut result_key_list = BTreeSet::new();
+					result_key_list.insert(job_id.encode());
 					Ok(Command::ResultData {
 						result_list: result_key_list,
 					})

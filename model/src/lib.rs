@@ -7,7 +7,8 @@ pub mod wasm_compatiable {
     use codec::{Decode, Encode, MaxEncodedLen};
     use frame_support::__private::RuntimeDebug;
     use scale_info::TypeInfo;
-
+    use sp_core::crypto::AccountId32;
+    use sp_core::sr25519::{Public, Signature};
 
     #[derive(Decode,Encode,Clone, PartialEq, Eq, Debug,Default)]
     pub struct RequestPayload {
@@ -21,7 +22,10 @@ pub mod wasm_compatiable {
         pub job_id : Vec<u8>,
         pub job_result: Vec<u8>,
         pub job_state: JobState,
+        pub address: Public,
+        pub exe_time: u32,
     }
+
     #[derive(Encode,MaxEncodedLen,Default, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
     pub enum JobState {
         #[default]
@@ -30,6 +34,7 @@ pub mod wasm_compatiable {
         Processing,
         Finish,
     }
+
 }
 
 

@@ -117,4 +117,8 @@ sc-client-db = { version = "0.44.1",default-features = false }
 pallet-staking = {version = "38.0.0", default-features = false}
 pallet-treasury = {version = "37.0.0", default-features = false}
 pallet-elections-phragmen = {version = "39.0.0",default-features = false}
+pallet-contracts = {version = "38.0.0", default-features = false}
+pallet-assets-chain-extension = {version = "0.1.1", default-features = false}
 script-executor = {path = "./script-executor", default-features = false}
+
+

@@ -29,9 +29,9 @@ use sp_io::misc::print_num;
 use sp_runtime::{print, KeyTypeId};
 use sc_keystore::LocalKeystore;
 use sp_core::crypto::key_types;
-use sp_core::ecdsa::Public;
 use sp_keystore::{Keystore, KeystorePtr};
-
+use sp_core::sr25519::Public;
+use sp_io::crypto::sr25519_sign;
 // local import
 use model::wasm_compatiable::{JobState, RequestPayload, ResponePayload};
 use script_executor::runtime::abi_reader;
@@ -55,23 +55,31 @@ struct JobPool {
 #[derive(Decode,Encode,Debug)]
 struct JobResult {
     job_id : Vec<u8>,
-    result : Vec<u8>
+    result : Vec<u8>,
+    ext_time: u32,
+
 }
+const KEY_TYPE_BABE: KeyTypeId = KeyTypeId(*b"babe");
+
 impl JobPool {
     fn new(receiver: mpsc::Receiver<JobResult>) -> JobPool {
         JobPool {
             result_rx: receiver
         }
     }
-    async fn result_listener(&mut self,backend : Arc<TFullBackend<Block>>) {
+    async fn result_listener(&mut self,backend : Arc<TFullBackend<Block>>,procesor_key: Arc<Public>) {
         loop {
             if let Some(job_result) = self.result_rx.recv().await {
                 let job_id = job_result.job_id;
                 let result = job_result.result;
+
+
                 let respone = ResponePayload {
                     job_id: job_id.clone(),
                     job_result: result,
                     job_state: JobState::Finish,
+                    address: *procesor_key.clone(),
+                    exe_time: job_result.ext_time,
                 };
                 println!("Receive Job result: {:?}", job_id);
                 match write_to_offchain_db(backend.clone(), &job_id, &respone.encode()).await {
@@ -93,14 +101,11 @@ impl JobPool {
     }
 }
 
-fn check_keystore(keystore: Arc<dyn Keystore>) {
-    const KEY_TYPE_BABE: KeyTypeId = KeyTypeId(*b"aura");
-
-    // Retrieve BABE session keys for underlying collator
+fn get_processor_keypair(keystore: Arc<dyn Keystore>) -> Public{
     let public_keys = keystore
         .sr25519_public_keys(KEY_TYPE_BABE);
-    let signed_payload = keystore.sr25519_sign(KEY_TYPE_BABE, &public_keys[0], "BRIv".as_ref());
-    let x = signed_payload.unwrap().unwrap().0;
+    // let signed_payload = keystore.sr25519_sign(KEY_TYPE_BABE, &public_keys[0], "BRIv".as_ref());
+    public_keys[0]
 }
 
 pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<Block>>,keystore: Arc<dyn Keystore>) {
@@ -110,14 +115,14 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_RESULT_LIST, b"init");
     let executor = Arc::new(task_manager.spawn_handle());
 
-    check_keystore(keystore.clone());
+    let current_processor_pubkey = Arc::new(get_processor_keypair(keystore.clone()));
 
     let (job_tx,job_rx) = mpsc::channel::<JobResult>(20);
     let mut job_pool = JobPool::new(job_rx);
 
     let backend_for_job_pool = backend.clone();
     executor.clone().spawn("JobPoolMonitor", group, async move {
-        job_pool.result_listener(backend_for_job_pool).await
+        job_pool.result_listener(backend_for_job_pool,current_processor_pubkey).await
     });
 
     executor.clone().spawn("OffChainMonitor", group, async move {
@@ -204,15 +209,16 @@ async fn write_to_offchain_db(backend: Arc<TFullBackend<Block>>, key: &[u8], new
 }
 
 async fn process_wasm(wasm_code : &[u8], wasm_abi : String, job_id: &[u8]) -> Result<JobResult, StorageError> {
-    // let result_from_wasm = b"some result idk, idc";
-    // Mock processing time
+    let start = Instant::now();
     let res = abi_reader(&wasm_abi, wasm_code)
         .await
         .expect("Shoudl work bruv");
-    // sleep_until(Instant::now() + Duration::from_millis(1000)).await;
+    let end = start.elapsed();
+
     let result = JobResult {
         job_id: job_id.to_vec(),
         result: res,
+        ext_time: end.subsec_millis(),
     };
     Ok(result)
 }

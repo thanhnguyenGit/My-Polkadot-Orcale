@@ -4,30 +4,38 @@ timeout = 120
 [relaychain]
 chain = "rococo-local"
 
+#[[relaychain.nodes]]
+#name = "alice"
+#validator = true
+#port = 30333
+#ws_port = 9944
+#rpc_port = 9933
+#
+#[[relaychain.nodes]]
+#name = "bob"
+#validator = true
+#port = 30334
+#ws_port = 9945
+#rpc_port = 9934
+
 [[relaychain.nodes]]
 name = "alice"
 validator = true
-port = 30333
-ws_port = 9944
-rpc_port = 9933
 
 [[relaychain.nodes]]
 name = "bob"
 validator = true
-port = 30334
-ws_port = 9945
-rpc_port = 9934
 
 [[parachains]]
 id = 1000
 addToGenesis = true
 cumulus_based = true
-chain_spec_path = "./chain_spec.json"
+#chain_spec_path = "./chain_spec.json"
 
 [[parachains.collators]]
 name = "dave"
 command = "./target/release/parachain-template-node"
-ws_port = 9935
+ws_port = 9823
 rpc_port = 8833
 port = 30335
 args = ["--collator","--dave","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
@@ -36,14 +44,44 @@ args = ["--collator","--dave","--offchain-worker always", "--enable-offchain-ind
 name = "charlie"
 command = "./target/release/parachain-template-node"
 ws_port = 9822
-rpc_port = 8834
+rpc_port = 9946
 port = 30336
 args = ["--collator", "--charlie","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
 
+#[[parachains.collators]]
+#name = "eve"
+#command = "./target/release/parachain-template-node"
+#ws_port = 9836
+#rpc_port = 8835
+#port = 30337
+#args = ["--collator", "--eve","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
+
+[[parachains]]
+id = 2007
+# Replace this with whichever chain you need to run, e.g. `astar-dev` if you need Astar
+addToGenesis = true
+chain = "shibuya-dev"
+cumulus_based = true
+
 [[parachains.collators]]
-name = "eve"
-command = "./target/release/parachain-template-node"
-ws_port = 9836
-rpc_port = 8835
+name = "astar_1"
+command = "./ext_bin/exter_bin"
+args = ["-l=xcm=trace,parachain=debug", "--enable-evm-rpc"]
+ws_port = 9823
+rpc_port = 9945
 port = 30337
-args = ["--collator", "--eve","--offchain-worker always", "--enable-offchain-indexing true","--log offchain=trace,logger=trace"]
+
+[[parachains.collators]]
+name = "astar_2"
+command = "./ext_bin/exter_bin"
+args = ["-l=xcm=trace,parachain=debug", "--enable-evm-rpc"]
+ws_port = 9824
+rpc_port = 9944
+port = 30338
+
+#[[parachains.collators]]
+#name = "collator2"
+#command = "./ext_bin/exter_bin"
+#args = ["--enable-evm-rpc","--collator"]
+#ws_port = 9945
+

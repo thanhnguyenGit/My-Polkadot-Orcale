@@ -320,6 +320,8 @@ mod runtime {
 
 	#[runtime::pallet_index(55)]
 	pub type PalletElection = pallet_elections_phragmen;
+	#[runtime::pallet_index(56)]
+	pub type PalletContract = pallet_contracts;
 }
 
 #[docify::export(register_validate_block)]

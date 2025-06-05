@@ -42,9 +42,11 @@ use frame_support::{
 	PalletId,
 };
 use frame_support::traits::fungible::conformance_tests::regular::balanced::deposit;
-use frame_support::traits::LockIdentifier;
-use frame_system::{limits::{BlockLength, BlockWeights}, CheckGenesis, CheckMortality, CheckNonZeroSender, CheckNonce, CheckSpecVersion, CheckTxVersion, CheckWeight, EnsureRoot};
+use frame_support::traits::{LockIdentifier, Nothing, Randomness};
+use frame_system::{limits::{BlockLength, BlockWeights}, CheckGenesis, CheckMortality, CheckNonZeroSender, CheckNonce, CheckSpecVersion, CheckTxVersion, CheckWeight, EnsureRoot, EnsureSigned};
 use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendTransactionTypes, SigningTypes};
+use pallet_contracts::config_preludes::{CodeHashLockupDepositPercent, DefaultDepositLimit, DepositPerByte, DepositPerItem, MaxDelegateDependencies};
+use pallet_contracts::{AddressGenerator, DefaultAddressGenerator, Schedule};
 use pallet_xcm::{EnsureXcm, IsVoiceOfBody};
 use parachains_common::message_queue::{NarrowOriginToSibling, ParaIdToSibling};
 use parachains_common::MINUTES;
@@ -53,12 +55,12 @@ use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::Get;
 use sp_runtime::{generic, OpaqueExtrinsic, Perbill, SaturatedConversion};
 use sp_runtime::generic::SignedPayload;
-use sp_runtime::traits::{Extrinsic, SignaturePayload};
+use sp_runtime::traits::{Extrinsic, SignaturePayload, Zero};
 use sp_version::RuntimeVersion;
 use xcm::latest::prelude::BodyId;
 use ocw_pallet::Call;
 // Local module imports
-use super::{weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight}, AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys, Signature, SignedExtra, System, UncheckedExtrinsic, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, VERSION};
+use super::{weights::{BlockExecutionWeight, ExtrinsicBaseWeight, RocksDbWeight}, AccountId, Aura, Balance, Balances, Block, BlockNumber, CollatorSelection, ConsensusHook, Hash, MessageQueue, Nonce, PalletInfo, ParachainSystem, Runtime, RuntimeCall, RuntimeEvent, RuntimeFreezeReason, RuntimeHoldReason, RuntimeOrigin, RuntimeTask, Session, SessionKeys, Signature, SignedExtra, System, Timestamp, UncheckedExtrinsic, WeightToFee, XcmpQueue, AVERAGE_ON_INITIALIZE_RATIO, EXISTENTIAL_DEPOSIT, HOURS, MAXIMUM_BLOCK_WEIGHT, MICRO_UNIT, MILLI_UNIT, NORMAL_DISPATCH_RATIO, SLOT_DURATION, UNIT, VERSION};
 use xcm_config::{RelayLocation, XcmOriginToTransactDispatchOrigin};
 use super::OriginCaller;
 
@@ -387,39 +389,52 @@ impl ocw_pallet::Config for Runtime {
 	type MaxNomiators = MaxNomiators;
 }
 
-// parameter_types! {
-// 	pub const ElectionPalletId : PalletId = PalletId(*b"my_elect");
-// 	pub const DesiredMembers: u32 = 10;
-// 	pub const DesiredRunnersUp:u32 = 10;
-// 	pub const MaxVoters: u32 = 10 * 1000;
-// 	pub const MaxVotesPerVoter: u32 = 16;
-// 	pub const TermDuration: BlockNumber = prod_or_fast!(24 * HOURS, 2 * MINUTES, "MOC_TERM_DURATION");
-// 	pub const MaxCandidates: u32 = 1000;
-// 	pub const CandidacyBond: Balance = MICRO_UNIT;
-// 	pub const VotingBondBase: Balance = MICRO_UNIT;
-// 	pub const VotingBondFactor: Balance = MICRO_UNIT;
-// }
+parameter_types! {
+	pub const ElectionPalletId : PalletId = PalletId(*b"my_elect");
+	pub const DesiredMembers: u32 = 10;
+	pub const DesiredRunnersUp:u32 = 10;
+	pub const MaxVoters: u32 = 10 * 1000;
+	pub const MaxVotesPerVoter: u32 = 16;
+	pub const TermDuration: BlockNumber = 5;
+	pub const MaxCandidates: u32 = 1000;
+	pub const CandidacyBond: Balance = MICRO_UNIT;
+	pub const VotingBondBase: Balance = MICRO_UNIT;
+	pub const VotingBondFactor: Balance = MICRO_UNIT;
+}
 //
-// impl pallet_elections_phragmen::Config for Runtime {
-// 	type RuntimeEvent = RuntimeEvent;
-// 	type PalletId = ElectionPalletId;
-// 	type Currency = Balances;
-// 	type ChangeMembers = ();
-// 	type InitializeMembers = ();
-// 	type CurrencyToVote = polkadot_runtime_common::CurrencyToVote;
-// 	type CandidacyBond = CandidacyBond;
-// 	type VotingBondBase = VotingBondBase;
-// 	type VotingBondFactor = VotingBondFactor;
-// 	type LoserCandidate = ();
-// 	type KickedMember = ();
-// 	type DesiredMembers = DesiredMembers;
-// 	type DesiredRunnersUp = ();
-// 	type TermDuration = TermDuration;
-// 	type MaxCandidates = MaxCandidates;
-// 	type MaxVoters = MaxVoters;
-// 	type MaxVotesPerVoter = ();
-// 	type WeightInfo = pallet_elections_phragmen::weights::SubstrateWeight<Runtime>;
-// }
+impl pallet_elections_phragmen::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type PalletId = ();
+	type Currency = Balances;
+	type ChangeMembers = ();
+	type InitializeMembers = ();
+	type CurrencyToVote = polkadot_runtime_common::CurrencyToVote;
+	type CandidacyBond = CandidacyBond;
+	type VotingBondBase = VotingBondBase;
+	type VotingBondFactor = VotingBondFactor;
+	type LoserCandidate = ();
+	type KickedMember = ();
+	type DesiredMembers = DesiredMembers;
+	type DesiredRunnersUp = ();
+	type TermDuration = TermDuration;
+	type MaxCandidates = MaxCandidates;
+	type MaxVoters = MaxVoters;
+	type MaxVotesPerVoter = ();
+	type WeightInfo = pallet_elections_phragmen::weights::SubstrateWeight<Runtime>;
+}
+
+
+fn schedule<T: pallet_contracts::Config>() -> pallet_contracts::Schedule<T> {
+	pallet_contracts::Schedule {
+		limits: pallet_contracts::Limits {
+			runtime_memory: 1024 * 1024 * 1024,
+			validator_runtime_memory: 2 * 1024 * 1024 * 1024,
+			..Default::default()
+		},
+		..Default::default()
+	}
+}
+
 
 parameter_types! {
 	// Unsigned Config
@@ -434,7 +449,7 @@ parameter_types! {
 	pub const MaxScriptKeyLen : u32 = 512;
 	pub const MaxJobs : u32 = 25;
 	pub const MaxResultSize : u32 = 1024;
-	pub const MaxResultSubmition : u32 = 15;
+	pub const MaxResultSubmition : u32 = 1024 * 15;
 }
 
 impl SendTransactionTypes<wasmstore_pallet::Call<Self>> for Runtime {
@@ -491,3 +506,44 @@ impl wasmstore_pallet::Config for Runtime {
 	type UnsignedPriority = WSUnsignedPriority;
 }
 
+
+
+pub struct DummyDeprecatedRandomness;
+impl Randomness<Hash, BlockNumber> for DummyDeprecatedRandomness {
+	fn random(_: &[u8]) -> (Hash, BlockNumber) {
+		(Default::default(), Zero::zero())
+	}
+}
+
+impl pallet_contracts::Config for Runtime {
+	type Time = Timestamp;
+	type Randomness = DummyDeprecatedRandomness;
+	type Currency = Balances;
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type RuntimeHoldReason = RuntimeHoldReason;
+	type CallFilter = Nothing;
+	type WeightPrice = pallet_transaction_payment::Pallet<Self>;
+	type WeightInfo = pallet_contracts::weights::SubstrateWeight<Self>;
+	type ChainExtension = ();
+	type Schedule = ();
+	type CallStack = [pallet_contracts::Frame<Self>; 5];
+	type DepositPerByte = DepositPerByte;
+	type DefaultDepositLimit = DefaultDepositLimit;
+	type DepositPerItem = DepositPerItem;
+	type CodeHashLockupDepositPercent = CodeHashLockupDepositPercent;
+	type AddressGenerator = DefaultAddressGenerator;
+	type MaxCodeLen = ConstU32<{ 123 * 1024 }>;
+	type MaxStorageKeyLen = ConstU32<128>;
+	type MaxTransientStorageSize = ConstU32<{ 1 * 1024 * 1024 }>;
+	type MaxDelegateDependencies = MaxDelegateDependencies;
+	type UnsafeUnstableInterface = ConstBool<false>;
+	type MaxDebugBufferLen = ConstU32<{ 2 * 1024 * 1024 }>;
+	type UploadOrigin = EnsureSigned<<Self as frame_system::Config>::AccountId>;
+	type InstantiateOrigin = EnsureSigned<<Self as frame_system::Config>::AccountId>;
+	type Migrations = ();
+	type Debug = ();
+	type Environment = ();
+	type ApiVersion = ();
+	type Xcm = ();
+}
