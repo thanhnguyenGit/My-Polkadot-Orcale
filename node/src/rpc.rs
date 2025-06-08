@@ -48,6 +48,6 @@ where
 	let FullDeps { client, pool } = deps;
 
 	module.merge(System::new(client.clone(), pool).into_rpc())?;
-	module.merge(TransactionPayment::new(client).into_rpc())?;
+	module.merge(TransactionPayment::new(client.clone()).into_rpc())?;
 	Ok(module)
 }

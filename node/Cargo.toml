@@ -103,14 +103,13 @@ cumulus-client-service.workspace = true
 cumulus-client-service.default-features = true
 cumulus-primitives-core.workspace = true
 cumulus-primitives-core.default-features = true
-cumulus-primitives-parachain-inherent.workspace = true
-cumulus-primitives-parachain-inherent.default-features = true
 cumulus-relay-chain-interface.workspace = true
 cumulus-relay-chain-interface.default-features = true
 color-print = { workspace = true }
 substrate-api-client = {version = "1.16.0" , default-features = true}
 sc-client-db = {workspace = true}
 sc-keystore = {version = "33.0.0", default-features = true}
+pallet-contracts = {workspace = true}
 # local dep
 # ------------------------------------------------------
 ocw-pallet = {workspace = true,default-features = false}
@@ -128,6 +127,7 @@ std = [
 	"parachain-template-runtime/std",
 	"xcm/std",
 	"ocw-pallet/std",
+
 ]
 runtime-benchmarks = [
 	"cumulus-primitives-core/runtime-benchmarks",

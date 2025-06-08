@@ -34,6 +34,7 @@ pallet-balances = {workspace = true,default-features = false}
 # LOCAL IMPORT
 #-------------------------------------------------------
 model = {path = "../../model", default-features = false}
+ocw-pallet.workspace = true
 [dev-dependencies]
 #sp-core = { workspace = true, default-features = true }
 sp-io = { workspace = true, default-features = true}

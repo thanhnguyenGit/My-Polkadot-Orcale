@@ -26,18 +26,21 @@ use parachain_template_runtime::{
 use substrate_api_client::api::api_client::Api;
 use sc_client_db::offchain;
 use sp_io::misc::print_num;
-use sp_runtime::{print, KeyTypeId};
+use sp_runtime::{print, KeyTypeId, MultiSigner};
 use sc_keystore::LocalKeystore;
 use sp_core::crypto::key_types;
 use sp_keystore::{Keystore, KeystorePtr};
 use sp_core::sr25519::Public;
 use sp_io::crypto::sr25519_sign;
+use sp_runtime::traits::IdentifyAccount;
 // local import
 use model::wasm_compatiable::{JobState, RequestPayload, ResponePayload};
 use script_executor::runtime::abi_reader;
 const OCW_STORAGE_PREFIX: &[u8] = b"storage";
 const WASMSTORE_KEY_LIST: &[u8] = b"wasmstore_jobs_executor";
 const WASMSTORE_RESULT_LIST: &[u8] = b"wasmstore_jobs_result";
+
+const ID  : &[u8] = b"identity";
 
 const CHARLIES_KEYSTORE_PATH : &str = "/tmp/zombie-3d89086b232a9b7a9448c265be86af6d_-27920-gm7XFZMCV1bS/charlie/data/chains/custom/keystore";
 #[derive(Debug)]
@@ -67,7 +70,7 @@ impl JobPool {
             result_rx: receiver
         }
     }
-    async fn result_listener(&mut self,backend : Arc<TFullBackend<Block>>,procesor_key: Arc<Public>) {
+    async fn result_listener(&mut self,backend : Arc<TFullBackend<Block>>,procesor_key: Public) {
         loop {
             if let Some(job_result) = self.result_rx.recv().await {
                 let job_id = job_result.job_id;
@@ -78,7 +81,7 @@ impl JobPool {
                     job_id: job_id.clone(),
                     job_result: result,
                     job_state: JobState::Finish,
-                    address: *procesor_key.clone(),
+                    address: procesor_key.clone(),
                     exe_time: job_result.ext_time,
                 };
                 println!("Receive Job result: {:?}", job_id);
@@ -101,11 +104,16 @@ impl JobPool {
     }
 }
 
-fn get_processor_keypair(keystore: Arc<dyn Keystore>) -> Public{
+fn get_processor_keypair(keystore: Arc<dyn Keystore>) -> Option<Public> {
     let public_keys = keystore
         .sr25519_public_keys(KEY_TYPE_BABE);
     // let signed_payload = keystore.sr25519_sign(KEY_TYPE_BABE, &public_keys[0], "BRIv".as_ref());
-    public_keys[0]
+
+    if public_keys.len() > 0 {
+        Some(public_keys[0])
+    } else {
+        None
+    }
 }
 
 pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<Block>>,keystore: Arc<dyn Keystore>) {
@@ -115,7 +123,14 @@ pub fn run_executor(task_manager: &mut TaskManager, backend : Arc<TFullBackend<B
     offchain_db.set(OCW_STORAGE_PREFIX, WASMSTORE_RESULT_LIST, b"init");
     let executor = Arc::new(task_manager.spawn_handle());
 
-    let current_processor_pubkey = Arc::new(get_processor_keypair(keystore.clone()));
+    let mut current_processor_pubkey = Public::default();
+     match get_processor_keypair(keystore.clone()) {
+         None => {}
+         Some(val) => {
+             offchain_db.set(OCW_STORAGE_PREFIX, ID, &val.clone());
+             current_processor_pubkey = val;
+         }
+     }
 
     let (job_tx,job_rx) = mpsc::channel::<JobResult>(20);
     let mut job_pool = JobPool::new(job_rx);

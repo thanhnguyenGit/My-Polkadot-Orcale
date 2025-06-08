@@ -78,8 +78,8 @@ pub mod pallet {
     use frame_support::traits::{dynamic_params::IntoKey, Currency, Imbalance, LockableCurrency, ReservableCurrency};
     use frame_support::pallet_prelude::*;
     use frame_support::PalletId;
-    use sp_runtime::traits::{ensure_pow, AccountIdConversion, BlockNumber, Bounded, CheckedConversion};
-    use sp_runtime::DispatchResultWithInfo;
+    use sp_runtime::traits::{ensure_pow, AccountIdConversion, BlockNumber, Bounded, CheckedConversion, IdentifyAccount};
+    use sp_runtime::{DispatchResultWithInfo, MultiSigner};
     use pallet_balances as PalletBalances;
     use pallet_treasury as PalletTreasury;
     use pallet_elections_phragmen as PalletElection;
